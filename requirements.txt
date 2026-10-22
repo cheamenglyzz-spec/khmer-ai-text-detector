@@ -1,0 +1,23 @@
+# data collection + processing
+pandas>=2.2
+requests>=2.32
+beautifulsoup4>=4.12
+datasets>=3.0
+tqdm>=4.66
+
+# AI text generation (step 2)
+google-genai>=1.0
+groq>=0.11
+python-dotenv>=1.0
+tenacity>=9.0
+
+# modelling + evaluation
+scikit-learn>=1.5
+transformers>=4.45
+torch>=2.4
+
+# demo
+streamlit>=1.38
+
+# notebooks
+ipykernel

@@ -1,0 +1,19 @@
+# data & models (published on Hugging Face instead)
+data/**
+!data/**/
+!data/**/.gitkeep
+models/**
+!models/.gitkeep
+# secrets
+.env
+*.key
+# python / jupyter
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+!.env.example
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
