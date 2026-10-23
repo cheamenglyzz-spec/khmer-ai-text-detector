@@ -38,7 +38,8 @@ reports/         figures, metrics, final report
 
 ## Conventions
 - Python 3.10+, dependencies in `requirements.txt`.
-- Each record: `text, label (human|ai), source, generator, url, date, length`.
+- Each record: `text, label, source, generator, url, date, length`.
+- Labels are integers: `0` = human, `1` = ai.
 - Save data as JSONL/CSV in UTF-8; Khmer text must round-trip without mojibake.
 - Human-text quota is 4,000 per source.
 - Fixed random seed (42) for all splits and sampling.
