@@ -16,7 +16,7 @@ Usage:
     python src/generate_ai.py --check-models           # confirm the model ids with your keys
     python src/generate_ai.py --limit 20               # small real test (5 per generator)
     python src/generate_ai.py                          # full run (resumable, Ctrl+C is safe)
-    python src/generate_ai.py --generators gemini:gemini-2.5-flash,groq:llama-3.3-70b-versatile@4
+    python src/generate_ai.py --generators gemini:gemini-3.1-flash-lite,groq:openai/gpt-oss-120b@4
         (optional "@seconds" after a model overrides its minimum request interval)
 """
 from __future__ import annotations
@@ -60,7 +60,7 @@ REQUEST_TIMEOUT_S = 120
 # One model per family, so any one can be held out as the out-of-distribution generator.
 # qwen gets a long interval: Groq caps it at ~1,000 output tokens/min on the free tier.
 DEFAULT_GENERATORS = (
-    "gemini:gemini-3.5-flash,"
+    "gemini:gemini-3.1-flash-lite,"
     "gemini:gemma-4-31b-it,"
     "groq:openai/gpt-oss-120b,"
     "groq:qwen/qwen3.8-27b@100"
@@ -76,7 +76,10 @@ GROQ_EXTRA_PARAMS = {
     "qwen/qwen3.8-27b": {"reasoning_effort": "none", "reasoning_format": "hidden"},
     "openai/gpt-oss-120b": {"reasoning_effort": "low"},
 }
-GEMINI_NO_THINKING_MODEL_HINT = "flash"  # flash models accept thinking_budget=0; pro models do not
+# How to switch thinking off, by model-name substring (first match wins). Flash models take
+# thinking_budget=0; gemma rejects that and takes thinking_level instead (unset, it thinks
+# away the whole output budget and returns empty text).
+GEMINI_NO_THINKING = (("gemma", {"thinking_level": "minimal"}), ("flash", {"thinking_budget": 0}))
 
 # ---------------------------------------------------------------------------
 # Prompt templates (edit here)
@@ -89,6 +92,8 @@ LENGTH_SLACK = 0.2  # prompt asks for target +/- this fraction
 # Per-row output cap: tokens = max_chars * this + headroom (reasoning tokens, Khmer is ~0.6-1.1 tok/char).
 # A row that hits it ends with finish_reason=length and is trimmed or dropped in step 3.
 TOKENS_PER_MAX_CHAR = 1.1
+# Models that tokenize Khmer heavily or overshoot the asked length get more room.
+TOKENS_PER_MAX_CHAR_BY_MODEL = {"qwen/qwen3.8-27b": 1.6}
 TOKEN_HEADROOM = 300
 
 SYSTEM_PROMPT = (
@@ -162,7 +167,7 @@ class GeneratorSpec:
 
 
 def parse_generators(arg: str) -> list[GeneratorSpec]:
-    """'gemini:gemini-2.5-flash,groq:openai/gpt-oss-120b@4' -> specs ('@secs' = min interval)."""
+    """'gemini:gemini-3.1-flash-lite,groq:openai/gpt-oss-120b@4' -> specs ('@secs' = min interval)."""
     specs: list[GeneratorSpec] = []
     for item in (p.strip() for p in arg.split(",")):
         if not item:
@@ -224,10 +229,11 @@ def build_prompt(source: str, title: str, text: str) -> tuple[str, str, int]:
     return PROMPT_WEB, prompt, target_chars
 
 
-def row_max_tokens(target_chars: int, cap: int) -> int:
+def row_max_tokens(target_chars: int, cap: int, model: str = "") -> int:
     """Output-token budget for one row: room for the prompt's upper length bound, never above `cap`."""
     max_chars = target_chars * (1 + LENGTH_SLACK)
-    return min(cap, int(max_chars * TOKENS_PER_MAX_CHAR) + TOKEN_HEADROOM)
+    per_char = TOKENS_PER_MAX_CHAR_BY_MODEL.get(model, TOKENS_PER_MAX_CHAR)
+    return min(cap, int(max_chars * per_char) + TOKEN_HEADROOM)
 
 
 def load_human(path: Path) -> pd.DataFrame:
@@ -484,7 +490,7 @@ class GeminiProvider(Provider):
         )
 
     def extras(self) -> dict:
-        return {"thinking_budget": 0} if GEMINI_NO_THINKING_MODEL_HINT in self.model else {}
+        return next((dict(cfg) for hint, cfg in GEMINI_NO_THINKING if hint in self.model), {})
 
     def _request(self, system, prompt, max_tokens, temperature, use_extras) -> Completion:
         config = genai_types.GenerateContentConfig(
@@ -712,7 +718,7 @@ class GeneratorWorker:
             return self.provider.generate(
                 SYSTEM_PROMPT,
                 task.prompt,
-                max_tokens=row_max_tokens(task.target_chars, self.max_tokens),
+                max_tokens=row_max_tokens(task.target_chars, self.max_tokens, self.spec.model),
                 temperature=self.temperature,
             )
         except StopRequested:
