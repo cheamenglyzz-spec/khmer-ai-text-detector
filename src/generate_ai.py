@@ -4,6 +4,10 @@ Every human passage gets exactly one AI passage, written by one generator.
 Generators are assigned round-robin after a seed-42 shuffle, so the mapping is
 deterministic and a `--limit N` run is a stable, balanced prefix of the full run.
 
+Human passages are first cleaned with the exact per-text rules of step 3 (src/clean.py,
+clean_human_text). Passages step 3 would drop are left out of the assignment, and the
+prompts (target length, paragraph count, web_hint opening) are built from the cleaned text.
+
 Output (append-only JSONL, flushed after every record, doubles as the checkpoint):
     data/generated/ai_raw.jsonl      one record per success
     data/generated/ai_errors.jsonl   one record per failed row (the run continues)
@@ -45,6 +49,9 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_expo
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))  # so `python src/generate_ai.py` can import its sibling module as src.clean
+from src.clean import clean_human_text  # noqa: E402
+
 HUMAN_CSV = ROOT / "data" / "human.csv"
 OUT_PATH = ROOT / "data" / "generated" / "ai_raw.jsonl"
 ERRORS_NAME = "ai_errors.jsonl"  # lives next to the output file unless --errors is given
@@ -213,7 +220,7 @@ def make_hint(text: str, max_chars: int = HINT_CHARS) -> str:
 
 
 def build_prompt(source: str, title: str, text: str) -> tuple[str, str, int]:
-    """Return (prompt_type, prompt, target_chars) for one human passage."""
+    """Return (prompt_type, prompt, target_chars) for one human passage (its cleaned text, see clean_human)."""
     target_chars = min(2500, max(300, int(round(len(text) / 100.0)) * 100))
     n_paragraphs = max(1, int(round(len(text) / CHARS_PER_PARAGRAPH)))
     length = dict(
@@ -245,6 +252,20 @@ def load_human(path: Path) -> pd.DataFrame:
     if not df["id"].is_unique:
         raise ValueError(f"{path} has duplicate ids")
     return df
+
+
+def clean_human(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Apply step 3's per-text rules to every human passage.
+
+    Returns the surviving rows, with `text` replaced by the cleaned text, and the number of
+    excluded rows per source (step 3 would drop them, so generating for them wastes quota).
+    """
+    cleaned = [clean_human_text(text) for text in df["text"]]
+    keep = pd.Series([c is not None for c in cleaned], index=df.index)
+    excluded = {str(src): int(n) for src, n in df.loc[~keep, "source"].value_counts().sort_index().items()}
+    out = df.loc[keep].copy()
+    out["text"] = [c for c in cleaned if c is not None]
+    return out.reset_index(drop=True), excluded
 
 
 def build_assignment(df: pd.DataFrame, specs: list[GeneratorSpec], seed: int = SEED) -> list[Task]:
@@ -1010,6 +1031,12 @@ def main(argv=None) -> int:
         return check_models(specs)
 
     df = load_human(args.human)
+    n_loaded = len(df)
+    df, excluded = clean_human(df)
+    print(
+        f"Human passages: {n_loaded} loaded, {len(df)} kept after step-3 cleaning, "
+        f"{n_loaded - len(df)} excluded ({', '.join(f'{s} {n}' for s, n in excluded.items()) or 'none'})"
+    )
     tasks = build_assignment(df, specs, args.seed)
     if args.limit is not None:
         tasks = tasks[: args.limit]

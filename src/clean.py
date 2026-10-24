@@ -1,10 +1,15 @@
 """Step 3: clean, deduplicate and length-match human vs AI Khmer text into one labelled dataset.
 
-Both classes go through exactly the same normalization, so the detector cannot learn
-formatting artifacts (e.g. gpt-oss puts U+200B between Khmer words, human text does not).
+Both classes go through exactly the same normalization and structure cleaning, so the
+detector cannot learn formatting artifacts (e.g. gpt-oss puts U+200B between Khmer words,
+human text does not; Wikipedia passages carry "See also" footers and one-word headings).
 
-Pipeline: normalize -> truncation / Khmer-ratio / length filters -> copied-hint check
-          -> deduplication -> length matching -> shuffle -> write.
+Pipeline: normalize -> cut footer sections -> strip list markers -> drop residue lines (site
+          titles, URLs, wikitext) -> drop short fragment lines -> trim to the last sentence end
+          -> Khmer-ratio / length filters -> copied-hint check -> deduplication -> length
+          matching -> shuffle -> write.
+The per-text part (everything up to the length filters) lives in `process_text`; step 2
+(generate_ai.py) calls `clean_human_text` so it only prompts for passages that survive it.
 
 Inputs:
     data/human.csv                   human passages (step 1)
@@ -56,6 +61,7 @@ N_BINS = (MAX_CHARS - MIN_CHARS) // BIN_WIDTH
 COPY_CHECK_CHARS = 300  # copy check looks at the first N chars of a web_hint AI text...
 COPY_MIN_SPAN = 60  # ...and drops it if a span this long also appears in the linked human text
 NEAR_DUP_CHARS = 150  # texts with identical first N chars count as near-duplicates
+MIN_LINE_CHARS = 40  # a line shorter than this that does not end a sentence is a fragment (heading, nav, list item)
 TRUNCATED_FINISH_REASONS = {"length"}  # the API cut these off at the token cap, mid-word
 SENTENCE_ENDS = "។៕?!"  # Khmer khan and bariyoosan, plus ? and !
 CLOSERS = "\"'”’»)]"  # closing quotes/brackets that may follow a sentence end
@@ -64,9 +70,25 @@ CLOSERS = "\"'”’»)]"  # closing quotes/brackets that may follow a sentence 
 # joiner, word joiner, BOM. The rest only showed up in the human text (soft hyphen, LRM/RLM,
 # bidi embeddings, invisible operators); gone from both so they cannot become a feature.
 INVISIBLE_CHARS = (
-    "​‌‍⁠﻿"
-    "­‎‏‪‫‬‭‮⁡⁢⁣⁤"
+    "\u200b\u200c\u200d\u2060\ufeff"
+    "\u00ad\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2061\u2062\u2063\u2064"
 )
+
+# A short line (< MIN_LINE_CHARS) starting with one of these (case-insensitive) is a footer
+# heading: it and everything after it is cut. Spelling variants are listed on purpose.
+FOOTER_MARKERS = (
+    "មើលផងដែរ", "សូមមើលផងដែរ", "See also",  # See also
+    "ឯកសារយោង", "ឯកសារពិគ្រោះ",  # References / consulted documents
+    "គន្ថនិទ្ទេស", "អានបន្ថែម", "ការអានបន្ថែម",  # Bibliography / further reading
+    "តំណភ្ជាប់", "តំនភ្ជាប់", "តំណរភ្ជាប់", "តំណខាងក្រៅ", "តំណក្រៅ", "តំនក្រៅ",  # External links
+    "កំណត់សម្គាល់", "កំណត់សំគាល់", "កំណត់ចំណាំ", "Notes",  # Notes
+    "ប្រភពឯកសារ",  # Sources
+    "ចំណាត់ថ្នាក់ក្រុម", "Category:",  # Category
+)
+
+# Residue lines, dropped from both classes: web/wiki leftovers an AI text never contains.
+SITE_SEPARATOR = " | "  # "headline | site-name" title lines
+WIKITEXT_STARTS = ("{|", "|}", "|-", "{{", "!", "Short description")  # table / template / maintenance lines
 
 DROP_REASONS = (
     "truncated_no_sentence_end",
@@ -87,13 +109,19 @@ OUTPUT_FIELDS = (
 # Text cleaning (pure functions)
 # ---------------------------------------------------------------------------
 _REMOVE_INVISIBLE = str.maketrans("", "", INVISIBLE_CHARS)
-_LINE_BREAKS = re.compile(r"\r\n|[\r\x0b\x0c\x85  ]")
+_LINE_BREAKS = re.compile(r"\r\n|[\r\x0b\x0c\x85\u2028\u2029]")
 _CONTROLS = re.compile(r"[\x00-\x08\x0e-\x1f\x7f-\x9f]")
 _INLINE_SPACE = re.compile(r"[^\S\n]+")  # any Unicode whitespace except the newline
 # "()", "( )" and Wikipedia template leftovers like "(, ;)": nothing but spaces and separators.
 _EMPTY_PARENS = re.compile(r"\([\s,;:]*\)")
 _SENTENCE_END = re.compile(f"[{SENTENCE_ENDS}]+[{re.escape(CLOSERS)}]*")
-_KHMER_CHAR = re.compile("[ក-៿᧠-᧿]")
+# Leading bullet or numbering marker. A dash or a number needs a space after it, so that
+# "-5" and "2.5 លាន" stay intact; "*", "•" and "·" may sit right against the text.
+_LIST_MARKER = re.compile(r"(?:[*•·]+\s*|-+\s+|[0-9០-៩]+[.)]\s+)")
+_FOOTER_PREFIXES = tuple(m.lower() for m in FOOTER_MARKERS)
+_URL = re.compile(r"https?://|www\.", re.IGNORECASE)
+_TEMPLATE_PARAM = re.compile(r"\|[^=|]{1,40}=")  # "| name = value", matched at the start of a line
+_KHMER_CHAR = re.compile("[\u1780-\u17ff\u19e0-\u19ff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]+")
 
 
@@ -123,6 +151,75 @@ def trim_to_sentence_end(text: str, limit: int | None = None) -> str:
 
 def ends_with_sentence_end(text: str) -> bool:
     return bool(text) and trim_to_sentence_end(text) == text
+
+
+def is_footer_heading(line: str) -> bool:
+    return len(line) < MIN_LINE_CHARS and line.lower().startswith(_FOOTER_PREFIXES)
+
+
+def cut_footer(text: str) -> tuple[str, bool]:
+    """Cut the text at its first footer heading (See also, References, External links, ...)."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if is_footer_heading(line):
+            return "\n".join(lines[:i]), True
+    return text, False
+
+
+def strip_list_markers(text: str) -> tuple[str, int]:
+    """Remove a leading bullet / "1." marker from each line; returns (text, lines changed)."""
+    lines: list[str] = []
+    changed = 0
+    for line in text.split("\n"):
+        stripped = _LIST_MARKER.match(line)
+        if stripped:
+            changed += 1
+            line = line[stripped.end():]
+        if line:  # a line that held only a marker disappears
+            lines.append(line)
+    return "\n".join(lines), changed
+
+
+def is_residue_line(line: str) -> bool:
+    """A site-name title (" | "), a URL, or a wikitext table / template line."""
+    return (
+        SITE_SEPARATOR in line
+        or bool(_URL.search(line))
+        or line.startswith(WIKITEXT_STARTS)
+        or bool(_TEMPLATE_PARAM.match(line))
+    )
+
+
+def drop_residue_lines(text: str) -> tuple[str, int]:
+    """Drop residue lines; returns (text, lines dropped)."""
+    lines = text.split("\n")
+    kept = [line for line in lines if not is_residue_line(line)]
+    return "\n".join(kept), len(lines) - len(kept)
+
+
+def drop_short_lines(text: str) -> tuple[str, int]:
+    """Drop lines under MIN_LINE_CHARS that do not end a sentence; returns (text, lines dropped)."""
+    lines = text.split("\n")
+    kept = [line for line in lines if len(line) >= MIN_LINE_CHARS or ends_with_sentence_end(line)]
+    return "\n".join(kept), len(lines) - len(kept)
+
+
+@dataclass
+class Structured:
+    text: str
+    footer_cut: bool = False
+    markers_stripped: int = 0  # lines that lost a list marker
+    residue_dropped: int = 0  # site-title / URL / wikitext lines removed
+    lines_dropped: int = 0  # fragment lines removed
+
+
+def clean_structure(text: str) -> Structured:
+    """Footer, list-marker, residue-line and fragment-line rules for one already-normalized text."""
+    text, footer_cut = cut_footer(text)
+    text, markers = strip_list_markers(text)
+    text, residue = drop_residue_lines(text)
+    text, dropped = drop_short_lines(text)
+    return Structured(text, footer_cut, markers, residue, dropped)
 
 
 def khmer_ratio(text: str) -> float:
@@ -155,20 +252,25 @@ def copies_hint(ai_text: str, human_text: str) -> bool:
 class Filtered:
     text: str
     reason: str | None = None  # a DROP_REASONS entry, or None if the text stays
-    trimmed_truncated: bool = False  # AI text cut at the token cap, trimmed to its last sentence end
+    trimmed_end: bool = False  # text cut back to its last sentence end
+    trimmed_truncated: bool = False  # ...and it was an AI text the API cut off at the token cap
     trimmed_long: bool = False  # AI text over MAX_CHARS, trimmed to a sentence end
 
 
 def filter_text(text: str, is_ai: bool, truncated: bool = False) -> Filtered:
-    """Truncation, Khmer-ratio and length rules for one already-normalized text."""
+    """Sentence-end, Khmer-ratio and length rules for one structure-cleaned text.
+
+    Every text is trimmed to its last sentence end (a trailing fragment is a chunk-boundary or
+    token-cap artifact in both classes). `truncated` only labels the stats.
+    """
     out = Filtered(text)
-    if truncated:
-        trimmed = trim_to_sentence_end(text)
-        if not trimmed:
-            out.reason = "truncated_no_sentence_end"
-            return out
-        out.trimmed_truncated = trimmed != text
-        out.text = text = trimmed
+    trimmed = trim_to_sentence_end(text)
+    if not trimmed:
+        out.reason = "truncated_no_sentence_end"
+        return out
+    out.trimmed_end = trimmed != text
+    out.trimmed_truncated = truncated and out.trimmed_end
+    out.text = text = trimmed
     if khmer_ratio(text) < MIN_KHMER_RATIO:
         out.reason = "low_khmer_ratio"
         return out
@@ -182,6 +284,32 @@ def filter_text(text: str, is_ai: bool, truncated: bool = False) -> Filtered:
     elif len(text) > MAX_CHARS:
         out.reason = "too_long"
     return out
+
+
+@dataclass
+class Processed:
+    normalized: str  # after normalize_text, before any structure rule
+    structure: Structured
+    filtered: Filtered  # .text is the final cleaned text; .reason is set if the text is dropped
+
+
+def process_text(text: str, is_ai: bool, truncated: bool = False) -> Processed:
+    """The whole per-text rule set, in order: normalize -> structure cleaning -> sentence-end trim and filters.
+
+    Step 3 runs this on every row; generate_ai.py runs it (via clean_human_text) on the human passages.
+    """
+    normalized = normalize_text(text)
+    structure = clean_structure(normalized)
+    return Processed(normalized, structure, filter_text(structure.text, is_ai, truncated))
+
+
+def clean_human_text(text: str) -> str | None:
+    """The cleaned text of a human passage, or None if step 3 would drop it (no sentence end, not Khmer, bad length).
+
+    Cross-row rules (copy check, deduplication, length matching) are not applied here.
+    """
+    res = process_text(text, is_ai=False).filtered
+    return None if res.reason else res.text
 
 
 # ---------------------------------------------------------------------------
@@ -240,21 +368,42 @@ def load_ai(paths: list[Path]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
-def clean_and_filter(human: list[dict], ai: list[dict]) -> tuple[list[dict], list[dict], Counter]:
-    """Normalize every text, then apply the filters and the copy check.
+@dataclass
+class CleanRun:
+    kept: list[dict]
+    drops: list[dict]  # {id, label, reason}
+    trims: Counter  # AI trim counters and the web_hint-without-human warning
+    events: dict[str, Counter]  # structure-cleaning events per class name
+    before: dict  # structure_stats of the normalized input, before structure cleaning
 
-    Returns (kept records, drops as {id, label, reason}, trim counters). Records are updated in place.
-    """
+
+def clean_and_filter(human: list[dict], ai: list[dict]) -> CleanRun:
+    """Run process_text on every record, then the copy check. Updates records in place."""
     records = human + ai
-    for rec in records:
-        rec["text"] = normalize_text(rec["text"])
-    human_text = {r["id"]: r["text"] for r in human}  # normalized, whether or not the row survives
+    processed = [
+        process_text(r["text"], r["label"] == 1, truncated=r["finish_reason"] in TRUNCATED_FINISH_REASONS)
+        for r in records
+    ]
+    before = structure_stats([{"label": r["label"], "text": p.normalized} for r, p in zip(records, processed)])
+    # step 2 builds the web_hint prompt from the cleaned human text, so the copy check compares against
+    # that text too (kept for every human row, also those step 3 drops, since an AI row may link to it)
+    human_text = {r["id"]: p.filtered.text for r, p in zip(records, processed) if r["label"] == 0}
     kept: list[dict] = []
     drops: list[dict] = []
     trims: Counter = Counter()
-    for rec in records:
-        is_ai = rec["label"] == 1
-        res = filter_text(rec["text"], is_ai, truncated=is_ai and rec["finish_reason"] in TRUNCATED_FINISH_REASONS)
+    events = {name: Counter() for name in LABEL_NAMES.values()}
+    for rec, proc in zip(records, processed):
+        ev = events[label_name(rec)]
+        st, res = proc.structure, proc.filtered
+        ev["texts"] += 1
+        ev["footer_cut"] += st.footer_cut
+        ev["texts_markers_stripped"] += st.markers_stripped > 0
+        ev["markers_stripped"] += st.markers_stripped
+        ev["texts_residue_dropped"] += st.residue_dropped > 0
+        ev["residue_dropped"] += st.residue_dropped
+        ev["texts_lines_dropped"] += st.lines_dropped > 0
+        ev["lines_dropped"] += st.lines_dropped
+        ev["end_trimmed"] += res.trimmed_end
         if res.reason is None and rec["prompt_type"] == PROMPT_WEB:
             if rec["human_id"] not in human_text:
                 trims["web_hint_without_human_text"] += 1  # cannot be checked
@@ -268,7 +417,7 @@ def clean_and_filter(human: list[dict], ai: list[dict]) -> tuple[list[dict], lis
         rec["text"] = res.text
         rec["length"] = len(res.text)
         kept.append(rec)
-    return kept, drops, trims
+    return CleanRun(kept, drops, trims, events, before)
 
 
 def drop_duplicates(records: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -370,6 +519,20 @@ def latin_rate(records: list[dict]) -> float:
     return round(1000 * sum(latin_word_count(r["text"]) for r in records) / chars, 3) if chars else 0.0
 
 
+def structure_stats(records: list[dict]) -> dict:
+    """Per class: share of texts ending in a sentence end, share of lines under MIN_LINE_CHARS, mean lines."""
+    out = {}
+    for name, recs in group_by(records, label_name).items():
+        lines = [line for r in recs for line in r["text"].split("\n")]
+        out[name] = {
+            "n": len(recs),
+            "ends_with_sentence_end": round(sum(ends_with_sentence_end(r["text"]) for r in recs) / len(recs), 3),
+            "short_line_share": round(sum(len(line) < MIN_LINE_CHARS for line in lines) / len(lines), 3),
+            "mean_lines": round(len(lines) / len(recs), 2),
+        }
+    return out
+
+
 def summarize(records: list[dict]) -> dict:
     """Counts, length stats, Latin-word rates and sentence-end share of one set of records."""
     by_label, by_gen = group_by(records, label_name), group_by(records, lambda r: r["generator"])
@@ -385,9 +548,7 @@ def summarize(records: list[dict]) -> dict:
             "by_label": {k: latin_rate(v) for k, v in by_label.items()},
             "by_generator": {k: latin_rate(v) for k, v in by_gen.items()},
         },
-        "ends_with_sentence_end": {
-            k: round(sum(ends_with_sentence_end(r["text"]) for r in v) / len(v), 3) for k, v in by_label.items()
-        },
+        "structure": structure_stats(records),
     }
 
 
@@ -433,6 +594,36 @@ def print_lengths(title: str, s: dict) -> None:
     for name, st in rows:
         if st["n"]:
             print(f"{name:<34}{st['n']:>7}{st['min']:>7}{st['median']:>8.0f}{st['mean']:>8.0f}{st['max']:>7}")
+
+
+STRUCTURE_EVENT_ROWS = (
+    ("texts in", "texts"),
+    ("footer section cut", "footer_cut"),
+    ("texts with fragment lines dropped", "texts_lines_dropped"),
+    ("fragment lines dropped", "lines_dropped"),
+    ("texts with residue lines dropped", "texts_residue_dropped"),
+    ("residue lines dropped (| / URL / wikitext)", "residue_dropped"),
+    ("texts with list markers stripped", "texts_markers_stripped"),
+    ("lines with list marker stripped", "markers_stripped"),
+    ("texts trimmed to last sentence end", "end_trimmed"),
+)
+STRUCTURE_METRIC_ROWS = (
+    ("share ending in a sentence end", "ends_with_sentence_end"),
+    (f"share of lines under {MIN_LINE_CHARS} chars", "short_line_share"),
+    ("mean lines per text", "mean_lines"),
+)
+
+
+def print_structure(events: dict, before: dict, after: dict) -> None:
+    classes = list(LABEL_NAMES.values())
+    print("\n=== Structure cleaning (same rules for both classes) ===")
+    print(f"{'':<46}" + "".join(f"{c:>10}" for c in classes))
+    for title, key in STRUCTURE_EVENT_ROWS:
+        print(f"{title:<46}" + "".join(f"{events[c][key]:>10}" for c in classes))
+    print(f"\n{'before (all input) -> after (kept rows)':<46}" + "".join(f"{c:>20}" for c in classes))
+    for title, key in STRUCTURE_METRIC_ROWS:
+        cells = [f"{before.get(c, {}).get(key, '-')} -> {after.get(c, {}).get(key, '-')}" for c in classes]
+        print(f"{title:<46}" + "".join(f"{cell:>20}" for cell in cells))
 
 
 def print_drops(drop_counts: dict, n_in: dict) -> None:
@@ -497,10 +688,12 @@ def main(argv=None) -> int:
     finish_reasons = dict(sorted(Counter(r["finish_reason"] for r in ai).items()))
     print("AI finish_reason: " + ", ".join(f"{k} {v}" for k, v in finish_reasons.items()))
 
-    kept, drops, trims = clean_and_filter(human, ai)
-    kept, dup_drops = drop_duplicates(kept)
-    drops += dup_drops
-    drop_counts = count_drops(drops)
+    run = clean_and_filter(human, ai)
+    trims = run.trims
+    kept, dup_drops = drop_duplicates(run.kept)
+    drop_counts = count_drops(run.drops + dup_drops)
+    after_cleaning = summarize(kept)
+    print_structure(run.events, run.before, after_cleaning["structure"])
     print_drops(drop_counts, n_in)
     print(
         f"\nAI trimmed to a sentence end: {trims['ai_truncated_to_sentence_end']} cut-off by the token cap, "
@@ -509,7 +702,6 @@ def main(argv=None) -> int:
     if trims["web_hint_without_human_text"]:
         print(f"WARNING: {trims['web_hint_without_human_text']} web_hint rows have no linked human text; copy check skipped")
 
-    after_cleaning = summarize(kept)
     ks_before = ks_by_label(kept)
     if args.no_length_match:
         final = kept
@@ -532,9 +724,6 @@ def main(argv=None) -> int:
         f"{stage} " + "/".join(f"{k} {v}" for k, v in s["latin_words_per_1000_chars"]["by_label"].items())
         for stage, s in (("before matching", after_cleaning), ("final", summary))
     ))
-    print("Share of texts ending in a sentence end: " + ", ".join(
-        f"{k} {v}" for k, v in summary["ends_with_sentence_end"].items()
-    ))
     if not summary["by_label"].get("human") or not summary["by_label"].get("ai"):
         print("WARNING: one class is empty in the final set", file=sys.stderr)
 
@@ -546,7 +735,8 @@ def main(argv=None) -> int:
         "config": {
             "seed": args.seed, "min_chars": MIN_CHARS, "max_chars": MAX_CHARS, "min_khmer_ratio": MIN_KHMER_RATIO,
             "bin_width": BIN_WIDTH, "copy_check_chars": COPY_CHECK_CHARS, "copy_min_span": COPY_MIN_SPAN,
-            "near_dup_chars": NEAR_DUP_CHARS, "length_match": not args.no_length_match,
+            "near_dup_chars": NEAR_DUP_CHARS, "min_line_chars": MIN_LINE_CHARS,
+            "footer_markers": list(FOOTER_MARKERS), "length_match": not args.no_length_match,
             "human_file": str(args.human), "ai_files": [str(p) for p in args.ai],
         },
         "input": {
@@ -556,6 +746,11 @@ def main(argv=None) -> int:
             "ai_by_finish_reason": finish_reasons,
         },
         "trimmed": {k: v for k, v in trims.items() if k.startswith("ai_")},
+        "structure_cleaning": {
+            "events": {name: dict(ev) for name, ev in run.events.items()},
+            "before_all_input": run.before,
+            "after_kept_rows": after_cleaning["structure"],
+        },
         "drops": drop_counts,
         "after_cleaning": after_cleaning,
         "length_match_bins": bins,

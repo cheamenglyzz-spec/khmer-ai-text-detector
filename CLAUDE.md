@@ -24,7 +24,13 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
   - Length 300–2,500 chars, mean ~1,484 chars.
   - VOA Khmer skipped (SSL error on voakhmer.com); mC4 already includes ~147 khmer.voanews.com passages.
   - Known nit: some Wikipedia passages start with leftover "()" from stripped content; clean in step 3.
-- Next: step 2, AI text generation (Gemini + Groq), topic-matched to `data/human.csv`.
+- Step 2 IN PROGRESS: `src/generate_ai.py` is tested (100- and 40-row runs); the full run is not started.
+  - Generators: gemini-3.1-flash-lite, gemma-4-31b-it (Gemini API), openai/gpt-oss-120b, qwen/qwen3.8-27b (Groq).
+  - Prompts are built from the step-3-cleaned human text; 7,230 passages qualify (~1,807 per generator).
+  - Free-tier limits: Groq 1,000 requests/day per model, qwen ~1,000 output tokens/min (100 s interval); gemma often returns 500s (retried on rerun).
+  - `data/generated/ai_raw.jsonl` still holds 15 rows from the first smoke test; clear it before the full run.
+- Step 3 script READY: `src/clean.py` (tests in `tests/`). Same rules for both classes: strip invisible chars (gpt-oss adds U+200B), Wikipedia footers, title/URL/wikitext and fragment lines, trim to last sentence end, filter, dedup, length-match per 200-char bin.
+  - Known leftover: inline site-nav text in some mc4 passages (e.g. "- Kampuchea Thmey Home ...").
 
 ## Layout
 ```
