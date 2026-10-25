@@ -24,7 +24,20 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
   - Length 300–2,500 chars, mean ~1,484 chars.
   - VOA Khmer skipped (SSL error on voakhmer.com); mC4 already includes ~147 khmer.voanews.com passages.
   - Known nit: some Wikipedia passages start with leftover "()" from stripped content; clean in step 3.
-- Next: step 2, AI text generation (Gemini + Groq), topic-matched to `data/human.csv`.
+- Step 2 IN PROGRESS: full run started 2026-10-25, output `data/generated/ai_raw.jsonl`, log `data/generated/full_run.log`.
+  - Run it with `src/run_generation.ps1` in its own window: it reruns `generate_ai.py` (which resumes) every 30 min until done, so daily quotas and session restarts don't end the run.
+  - Generators: gemini-3.1-flash-lite, gemma-4-31b-it (Gemini API), openai/gpt-oss-120b, qwen/qwen3.8-27b (Groq).
+  - Prompts are built from the step-3-cleaned human text; 7,230 passages qualify (~1,807 per generator).
+  - The plan is frozen in `data/generated/plan.jsonl` (built with clean.py as of commit c4e86d7). Generation reads it, so later clean.py changes don't reshuffle generators. Never use `--rebuild-plan` mid-run.
+  - Free-tier limits: gpt-oss-120b 200k tokens/day (~150 texts/day, the bottleneck); Groq 1,000 requests/day per model; qwen ~1,000 output tokens/min (100 s interval); gemma is slow (~50 s/request) and often returns 500s (retried on rerun).
+  - First smoke-test output was moved to `data/generated/old_smoke_test/`.
+- Step 3 script READY: `src/clean.py` (tests in `tests/`). Same rules for both classes: strip invisible chars (gpt-oss adds U+200B), Wikipedia footers, title/URL/wikitext and fragment lines, trim to last sentence end, filter, dedup, length-match per 200-char bin.
+  - Known leftover: inline site-nav text in some mc4 passages (e.g. "- Kampuchea Thmey Home ...").
+- Steps 4–5 scripts READY: `src/split.py`, `src/baseline.py`. Their reports in `reports/` are from partial data; rerun steps 3–5 once generation is done.
+- Step 6 script READY, not yet run on a GPU: `src/finetune.py` (logic, CPU smoke-tested) + `notebooks/02_finetune_xlmr.ipynb` (Colab driver).
+  - Colab reads the splits from Drive `MyDrive/khmer-ai-text-detector/splits/` and writes the model and reports back to Drive.
+  - The GitHub repo is private: the notebook clones with a `GITHUB_TOKEN` Colab secret.
+  - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); check this in step 7.
 
 ## Layout
 ```
@@ -38,7 +51,8 @@ reports/         figures, metrics, final report
 
 ## Conventions
 - Python 3.10+, dependencies in `requirements.txt`.
-- Each record: `text, label (human|ai), source, generator, url, date, length`.
+- Each record: `text, label, source, generator, url, date, length`.
+- Labels are integers: `0` = human, `1` = ai.
 - Save data as JSONL/CSV in UTF-8; Khmer text must round-trip without mojibake.
 - Human-text quota is 4,000 per source.
 - Fixed random seed (42) for all splits and sampling.

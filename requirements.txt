@@ -11,9 +11,13 @@ groq>=0.11
 python-dotenv>=1.0
 tenacity>=9.0
 
+# testing
+pytest>=8.0
+
 # modelling + evaluation
 scikit-learn>=1.5
-transformers>=4.45
+transformers>=4.46
+accelerate>=1.1
 torch>=2.4
 
 # demo
