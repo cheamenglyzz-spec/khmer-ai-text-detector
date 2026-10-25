@@ -28,6 +28,7 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
   - Run it with `src/run_generation.ps1` in its own window: it reruns `generate_ai.py` (which resumes) every 30 min until done, so daily quotas and session restarts don't end the run.
   - Generators: gemini-3.1-flash-lite, gemma-4-31b-it (Gemini API), openai/gpt-oss-120b, qwen/qwen3.8-27b (Groq).
   - Prompts are built from the step-3-cleaned human text; 7,230 passages qualify (~1,807 per generator).
+  - The plan is frozen in `data/generated/plan.jsonl` (built with clean.py as of commit c4e86d7). Generation reads it, so later clean.py changes don't reshuffle generators. Never use `--rebuild-plan` mid-run.
   - Free-tier limits: gpt-oss-120b 200k tokens/day (~150 texts/day, the bottleneck); Groq 1,000 requests/day per model; qwen ~1,000 output tokens/min (100 s interval); gemma is slow (~50 s/request) and often returns 500s (retried on rerun).
   - First smoke-test output was moved to `data/generated/old_smoke_test/`.
 - Step 3 script READY: `src/clean.py` (tests in `tests/`). Same rules for both classes: strip invisible chars (gpt-oss adds U+200B), Wikipedia footers, title/URL/wikitext and fragment lines, trim to last sentence end, filter, dedup, length-match per 200-char bin.

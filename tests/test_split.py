@@ -69,28 +69,85 @@ def test_check_splits_catches_leaks():
     split.check_splits({"train": [a, b]}, [], [a, b])  # a clean split passes
 
 
-def test_holdout_generator_is_only_in_test_ood():
+def split_of(splits, quarantined=()):
+    owner = {r["id"]: name for name, rows in splits.items() for r in rows}
+    owner.update({r["id"]: "quarantined" for r in quarantined})
+    return owner
+
+
+def test_holdout_generator_is_only_in_test_ood_or_quarantined():
     records = make_records()
-    splits, _ = split.make_splits(records, HOLDOUT, seed=42)
+    splits, info = split.make_splits(records, HOLDOUT, seed=42)
     holdout_ids = {r["id"] for r in records if r["generator"] == HOLDOUT}
     ood_ai = {r["id"] for r in splits["test_ood"] if r["label"] == 1}
-    assert ood_ai == holdout_ids  # all of them, and nothing else
+    quarantined_ai = {r["id"] for r in info["quarantined"] if r["generator"] == HOLDOUT}
+    assert ood_ai | quarantined_ai == holdout_ids and not ood_ai & quarantined_ai  # every held-out row is one or the other
+    assert {r["generator"] for r in splits["test_ood"] if r["label"] == 1} == {HOLDOUT}
     for name in ("train", "val", "test"):
         assert HOLDOUT not in {r["generator"] for r in splits[name]}
     linked = {r["human_id"] for r in records if r["generator"] == HOLDOUT}
+    owner = split_of(splits, info["quarantined"])
     present = {r["id"] for r in records if r["label"] == 0 and r["id"] in linked}
-    assert present <= {r["id"] for r in splits["test_ood"]}  # linked humans that exist are in test_ood
+    assert {owner[i] for i in present} <= {"test_ood", "quarantined"}  # a linked human never lands in train/val/test
 
 
-def test_test_ood_is_balanced_by_label_and_length():
+def test_test_ood_has_equal_counts_in_every_length_bin():
     records = make_records()
     splits, info = split.make_splits(records, HOLDOUT, seed=42)
     ood = splits["test_ood"]
     labels = Counter(r["label"] for r in ood)
     assert labels[0] == labels[1] > 0
-    topup = info["ood"]["topup"]
-    assert topup["missing"] == 0 and topup["requested"] == topup["from_unpaired"] + topup["from_paired"]
-    assert clean.ks_by_label(ood) < 0.35  # the humans were topped up from the bins where AI rows sit
+    assert all(n_human == n_ai for n_human, n_ai in counts_per_bin(ood).values())
+    assert info["ood"]["ai_rows_kept"] == labels[1] and info["ood"]["human_rows"] == labels[0]
+    assert info["ood"]["pairs"] == clean.count_pairs(ood) > 0
+    assert clean.ks_by_label(ood) < 0.3
+
+
+def counts_per_bin(rows):
+    counts = {}
+    for r in rows:
+        counts.setdefault(clean.length_bin(r["length"]), [0, 0])[r["label"]] += 1
+    return counts
+
+
+def test_linked_humans_come_first_then_humans_without_a_partner():
+    # bin 0 (400 chars) has 4 held-out AI rows; two of their humans are in bin 0, the other two are in bin 4
+    records = [row(f"ai_l{i}", 1, 400, f"l{i}", HOLDOUT, "wikipedia") for i in range(4)]
+    records += [row(f"l{i}", 0, 410, f"l{i}", "human", "wikipedia") for i in range(2)]  # linked, same bin
+    records += [row(f"l{i}", 0, 1200, f"l{i}", "human", "wikipedia") for i in range(2, 4)]  # linked, bin 4: no free slot
+    records += [row(f"u{i}", 0, 420 + i, f"u{i}", "human", "wikipedia") for i in range(30)]  # no AI partner
+    splits, info = split.make_splits(records, HOLDOUT, seed=42)
+    ood_ids = {r["id"] for r in splits["test_ood"]}
+    assert {"l0", "l1"} <= ood_ids  # the linked humans with a slot are used first
+    assert len([i for i in ood_ids if i.startswith("u")]) == 2  # the other two slots go to unpartnered humans
+    quarantined = {r["id"] for r in info["quarantined"]}
+    assert quarantined == {"l2", "l3"}  # linked, but their bin has no slot: in no split
+    assert not quarantined & set(split_of(splits)) and info["ood"]["pairs"] == 2
+    assert info["ood"]["quarantined"]["linked_humans"] == 2
+
+
+def test_surplus_ai_rows_are_quarantined_when_a_bin_has_too_few_humans():
+    # bin 3 (1000 chars): 5 held-out AI rows and only 2 humans in the whole data for that bin
+    records = [row(f"ai_x{i}", 1, 1000, f"x{i}", HOLDOUT, "wikipedia") for i in range(5)]
+    records += [row(f"hh{i}", 0, 1010, f"hh{i}", "human", "wikipedia") for i in range(2)]
+    records += [row(f"o{i}", 0, 400 + 10 * i, f"o{i}", "human", "wikipedia") for i in range(40)]  # other bins only
+    splits, info = split.make_splits(records, HOLDOUT, seed=42)
+    ood = splits["test_ood"]
+    assert Counter(r["label"] for r in ood) == {0: 2, 1: 2}
+    assert info["ood"]["quarantined"]["surplus_ai"] == 3
+    assert len([r for r in info["quarantined"] if r["label"] == 1]) == 3
+    assert all(n_human == n_ai for n_human, n_ai in counts_per_bin(ood).values())
+
+
+def test_surplus_ai_rows_whose_human_is_in_test_ood_are_kept():
+    # bin 3: 4 held-out AI rows, 2 humans available: the two linked ones. The AI rows with a human survive.
+    records = [row(f"ai_p{i}", 1, 1000, f"p{i}", HOLDOUT, "wikipedia") for i in range(2)]
+    records += [row(f"ai_q{i}", 1, 1000, f"q{i}", HOLDOUT, "wikipedia") for i in range(2)]  # no human in the data
+    records += [row(f"p{i}", 0, 1010, f"p{i}", "human", "wikipedia") for i in range(2)]
+    splits, info = split.make_splits(records, HOLDOUT, seed=42)
+    kept_ai = {r["id"] for r in splits["test_ood"] if r["id"].startswith("ai_") and r["id"][3] in "pq"}
+    assert kept_ai == {"ai_p0", "ai_p1"}  # the two with a human in test_ood
+    assert {"ai_q0", "ai_q1"} <= {r["id"] for r in info["quarantined"]}
 
 
 def test_quarantine_when_only_paired_humans_are_left():
@@ -104,7 +161,7 @@ def test_quarantine_when_only_paired_humans_are_left():
     splits, info = split.make_splits(records, HOLDOUT, seed=42)
     ood_labels = Counter(r["label"] for r in splits["test_ood"])
     assert ood_labels[0] == ood_labels[1] == 30
-    assert info["ood"]["topup"]["from_paired"] == 30 and info["ood"]["topup"]["from_unpaired"] == 0
+    assert info["ood"]["humans_from"] == {"linked": 0, "unpaired": 0, "paired": 30}
     quarantined = {r["id"] for r in info["quarantined"]}
     assert len(quarantined) == 30
     assert not quarantined & {r["id"] for rows in splits.values() for r in rows}  # in no split
@@ -120,6 +177,7 @@ def test_partner_rows_of_another_generator_in_a_holdout_group_are_set_aside():
     splits, info = split.make_splits(records, HOLDOUT, seed=42)
     assert "ai2_h1" in {r["id"] for r in info["quarantined"]}
     assert "ai2_h1" not in {r["id"] for rows in splits.values() for r in rows}
+    assert info["ood"]["quarantined"]["other_generator_ai"] >= 1
 
 
 def test_in_distribution_split_sizes_and_stratification():
@@ -156,14 +214,6 @@ def test_splits_are_deterministic_for_a_seed():
 def test_missing_holdout_generator_raises():
     with pytest.raises(ValueError, match="held-out generator"):
         split.make_splits(make_records(), "g/nope", seed=42)
-
-
-def test_allocate_by_largest_remainder():
-    assert split.allocate_by_largest_remainder(10, {0: 5, 1: 5}) == {0: 5, 1: 5}
-    alloc = split.allocate_by_largest_remainder(4, {0: 1, 1: 10, 2: 10})
-    assert sum(alloc.values()) == 4 and alloc[0] <= 1
-    assert split.allocate_by_largest_remainder(0, {0: 3}) == {0: 0}
-    assert sum(split.allocate_by_largest_remainder(99, {0: 2, 1: 3}).values()) == 5  # capped by the weights
 
 
 def test_assign_groups_carries_rounding_across_small_strata():

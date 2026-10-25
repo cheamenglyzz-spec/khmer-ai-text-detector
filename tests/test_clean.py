@@ -1,4 +1,5 @@
 """Tests for the pure functions in src/clean.py (run: python -m pytest tests)."""
+import random
 import sys
 from pathlib import Path
 
@@ -439,3 +440,96 @@ def test_read_jsonl_complete_last_line_without_newline(tmp_path, capsys):
     path = write_bytes(tmp_path / "ai.jsonl", b'{"id": "a"}\n', b'{"id": "b"}')
     assert [r["id"] for r in clean.read_jsonl(path)] == ["a", "b"]
     assert capsys.readouterr().err == ""
+
+
+# -- spaces before Khmer marks ------------------------------------------------
+def test_normalize_removes_space_before_khmer_marks():
+    assert clean.normalize_text("ក ។ ខ ៕ គ ៖ ឃ") == "ក។ ខ៕ គ៖ ឃ"  # the space after the mark stays
+    assert clean.normalize_text("ក \t" + chr(0xA0) + "។") == "ក។"  # spaces, tabs and NBSP
+    assert clean.normalize_text("ក ។ ។ ខ") == "ក។។ ខ"  # every mark, also back to back
+    assert clean.normalize_text("ក\n ។ខ") == "ក\n។ខ"  # a line may start with a mark; the newline stays
+    assert clean.normalize_text("ក\n។") == "ក\n។"
+
+
+def test_normalize_leaves_other_marks_alone():
+    assert clean.normalize_text("ក ? ខ ! គ") == "ក ? ខ ! គ"
+    assert clean.normalize_text("ក ៗ ខ") == "ក ៗ ខ"  # lek too is left as written
+    assert clean.normalize_text("ក។ ខ៖ គ") == "ក។ ខ៖ គ"
+    assert clean.normalize_text("ក . ខ ; គ , ឃ") == "ក . ខ ; គ , ឃ"
+
+
+def test_normalize_mark_spacing_is_idempotent():
+    text = "ក ។ ( ) ៖ ខ\n\n ៕ គ ។"
+    once = clean.normalize_text(text)
+    assert once == "ក។៖ ខ\n៕ គ។"
+    assert clean.normalize_text(once) == once
+
+
+def test_spaced_and_unspaced_marks_clean_to_the_same_text():
+    spaced = LONG_TEXT.replace("។", " ។")
+    assert spaced != LONG_TEXT
+    assert clean.clean_human_text(spaced) == clean.clean_human_text(LONG_TEXT) == LONG_TEXT
+
+
+# -- topic pairs in length matching -------------------------------------------
+def pair_rec(id_, label, length, human_id):
+    return {**rec(id_, label, length), "human_id": human_id}
+
+
+def test_count_pairs():
+    rows = [pair_rec("h1", 0, 400, "h1"), pair_rec("ai_h1", 1, 400, "h1"), pair_rec("ai_h2", 1, 400, "h2")]
+    assert clean.count_pairs(rows) == 1
+    assert clean.count_pairs([]) == 0
+
+
+def test_length_match_prefers_the_humans_linked_to_kept_ai_rows():
+    # bin 0 (400 chars): 30 humans and 10 AI rows whose humans are not in the data
+    # bin 5 (1500 chars): 10 AI rows whose humans h0..h9 sit in bin 0, plus 10 unrelated humans
+    rows = [pair_rec(f"h{i}", 0, 400, f"h{i}") for i in range(30)]
+    rows += [pair_rec(f"b{i}", 1, 410, f"gone{i}") for i in range(10)]
+    rows += [pair_rec(f"ai_h{i}", 1, 1500, f"h{i}") for i in range(10)]
+    rows += [pair_rec(f"u{i}", 0, 1510, f"u{i}") for i in range(10)]
+    matched = clean.length_match(rows, seed=42)
+    assert clean.count_pairs(matched) == 10  # all ten partners are picked out of the 30 humans in bin 0
+    assert {r["id"] for r in matched if r["label"] == 0 and clean.length_bin(r["length"]) == 0} == {f"h{i}" for i in range(10)}
+    per_bin = counts_per_bin(matched)
+    assert all(n_human == n_ai for n_human, n_ai in per_bin.values())
+
+
+def test_length_match_prefers_ai_rows_whose_human_survives():
+    # bin 2 (800 chars): 20 AI rows but only 5 humans; the humans of a0..a4 are those 5 humans
+    rows = [pair_rec(f"h{i}", 0, 810, f"h{i}") for i in range(5)]
+    rows += [pair_rec(f"ai_h{i}", 1, 800, f"h{i}") for i in range(5)]
+    rows += [pair_rec(f"x{i}", 1, 800, f"gone{i}") for i in range(15)]
+    matched = clean.length_match(rows, seed=42)
+    assert {r["id"] for r in matched if r["label"] == 1} == {f"ai_h{i}" for i in range(5)}
+    assert clean.count_pairs(matched) == 5
+
+
+def test_length_match_ai_whose_human_may_still_be_picked_beats_ai_without_a_human():
+    # bin 2: 5 humans (all kept) vs 20 AI. Five AI rows have their humans in bin 0, which is downsampled
+    # (30 humans vs 5 AI there); the other 15 AI rows have no human in the data.
+    rows = [pair_rec(f"u{i}", 0, 800, f"u{i}") for i in range(5)]
+    rows += [pair_rec(f"h{i}", 0, 400, f"h{i}") for i in range(30)]
+    rows += [pair_rec(f"y{i}", 1, 400, f"gone_y{i}") for i in range(5)]
+    rows += [pair_rec(f"ai_h{i}", 1, 800, f"h{i}") for i in range(5)]
+    rows += [pair_rec(f"x{i}", 1, 800, f"gone{i}") for i in range(15)]
+    matched = clean.length_match(rows, seed=42)
+    assert {r["id"] for r in matched if r["label"] == 1 and clean.length_bin(r["length"]) == 2} == {f"ai_h{i}" for i in range(5)}
+    assert clean.count_pairs(matched) == 5  # their humans h0..h4 are then the ones kept in bin 0
+
+
+def test_length_match_with_pairs_keeps_equal_counts_and_is_deterministic():
+    rng = random.Random(5)
+    rows = []
+    for i in range(300):
+        if rng.random() < 0.9:
+            rows.append(pair_rec(f"h{i:03d}", 0, rng.randint(300, 2500), f"h{i:03d}"))
+        if rng.random() < 0.8:
+            rows.append(pair_rec(f"ai_h{i:03d}", 1, rng.randint(900, 2500), f"h{i:03d}"))
+    matched = clean.length_match(rows, seed=42)
+    assert all(n_human == n_ai for n_human, n_ai in counts_per_bin(matched).values())
+    assert len({r["id"] for r in matched}) == len(matched) and {r["id"] for r in matched} <= {r["id"] for r in rows}
+    again = clean.length_match(list(reversed(rows)), seed=42)
+    assert {r["id"] for r in matched} == {r["id"] for r in again}
+    assert clean.count_pairs(matched) > 0.5 * sum(r["label"] == 1 for r in matched)  # most AI rows keep their human

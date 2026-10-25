@@ -64,6 +64,7 @@ NEAR_DUP_CHARS = 150  # texts with identical first N chars count as near-duplica
 MIN_LINE_CHARS = 40  # a line shorter than this that does not end a sentence is a fragment (heading, nav, list item)
 TRUNCATED_FINISH_REASONS = {"length"}  # the API cut these off at the token cap, mid-word
 SENTENCE_ENDS = "។៕?!"  # Khmer khan and bariyoosan, plus ? and !
+NO_SPACE_BEFORE = "។៕៖"  # Khmer marks that get no space before them: human text often has one, AI text almost never
 CLOSERS = "\"'”’»)]"  # closing quotes/brackets that may follow a sentence end
 
 # Invisible characters, removed from BOTH classes. First five: zero-width space/non-joiner/
@@ -115,6 +116,7 @@ _INLINE_SPACE = re.compile(r"[^\S\n]+")  # any Unicode whitespace except the new
 # "()", "( )" and Wikipedia template leftovers like "(, ;)": nothing but spaces and separators.
 _EMPTY_PARENS = re.compile(r"\([\s,;:]*\)")
 _SENTENCE_END = re.compile(f"[{SENTENCE_ENDS}]+[{re.escape(CLOSERS)}]*")
+_SPACE_BEFORE_MARK = re.compile(f"[^\\S\\n]+(?=[{NO_SPACE_BEFORE}])")  # spaces/tabs right before one of those marks
 # Leading bullet or numbering marker. A dash or a number needs a space after it, so that
 # "-5" and "2.5 លាន" stay intact; "*", "•" and "·" may sit right against the text.
 _LIST_MARKER = re.compile(r"(?:[*•·]+\s*|-+\s+|[0-9០-៩]+[.)]\s+)")
@@ -136,6 +138,7 @@ def normalize_text(text: str) -> str:
         if not n:
             break
     text = _INLINE_SPACE.sub(" ", text)  # removing "()" can leave a double space
+    text = _SPACE_BEFORE_MARK.sub("", text)  # "ក ។" -> "ក។"; "?" and "!" are left alone
     lines = (line.strip() for line in text.split("\n"))
     return "\n".join(line for line in lines if line).strip()  # one "\n" between paragraphs
 
@@ -453,23 +456,67 @@ def bin_label(index: int) -> str:
     return f"{low}-{low + BIN_WIDTH - (0 if index == N_BINS - 1 else 1)}"
 
 
-def length_match(records: list[dict], seed: int = SEED) -> list[dict]:
-    """Per length bin, downsample the larger class to the smaller class's count.
+def sample_by_tier(rows: list[dict], n: int, tier_of, rng: random.Random) -> list[dict]:
+    """n rows: all of tier 0 first (a random part of it if it is too big), then tier 1, and so on.
 
-    Ids are sorted before sampling, so the result depends only on the data and the seed.
+    `rows` must be sorted by id; within a tier the choice is random but seeded.
+    """
+    if len(rows) <= n:
+        return rows
+    tiers: dict[int, list[dict]] = {}
+    for row in rows:
+        tiers.setdefault(tier_of(row), []).append(row)
+    chosen: list[dict] = []
+    for tier in sorted(tiers):
+        take = min(n - len(chosen), len(tiers[tier]))
+        chosen += rng.sample(tiers[tier], take) if take < len(tiers[tier]) else tiers[tier]
+        if len(chosen) == n:
+            break
+    return chosen
+
+
+def length_match(records: list[dict], seed: int = SEED) -> list[dict]:
+    """Per length bin, downsample the larger class to the smaller class's count, keeping topic pairs where it can.
+
+    A pair is a human row and the AI row written for it (same human_id). The choices are made in this
+    order, so none of them depends on a later one:
+      1. A bin keeps all rows of its smaller class (both, if equal): its AI rows if AI is smaller, its
+         human rows if humans are smaller.
+      2. In bins where AI is the larger class, keep the AI rows whose human is certain to survive first
+         (the human sits in a bin where all humans are kept), then those whose human sits in a bin that is
+         downsampled (it may still be picked in step 3), then the rest.
+      3. In bins where humans are the larger class, keep the humans linked to a surviving AI row first.
+    Within each group the pick is random. Ids are sorted before sampling, so the result depends only on
+    the data and the seed.
     """
     rng = random.Random(seed)
     by_bin: dict[int, dict[int, list[dict]]] = {}
     for rec in records:
         by_bin.setdefault(length_bin(rec["length"]), {0: [], 1: []})[rec["label"]].append(rec)
-    kept: list[dict] = []
-    for index in sorted(by_bin):
-        groups = {label: sorted(recs, key=lambda r: r["id"]) for label, recs in by_bin[index].items()}
-        n = min(len(groups[0]), len(groups[1]))
-        for label in (0, 1):
-            group = groups[label]
-            kept += rng.sample(group, n) if len(group) > n else group
-    return kept
+    bins = {i: {label: sorted(recs, key=lambda r: r["id"]) for label, recs in g.items()} for i, g in by_bin.items()}
+    human_bin = {r["human_id"]: i for i, g in bins.items() for r in g[0]}
+    humans_downsampled = {i for i, g in bins.items() if len(g[0]) > len(g[1])}
+
+    def ai_tier(rec: dict) -> int:  # 0: human surely kept, 1: human might be kept, 2: no human in the data
+        home = human_bin.get(rec["human_id"])
+        return 2 if home is None else (1 if home in humans_downsampled else 0)
+
+    kept_ai: list[dict] = []
+    for index in sorted(bins):
+        humans, ais = bins[index][0], bins[index][1]
+        kept_ai += sample_by_tier(ais, len(humans), ai_tier, rng)  # keeps all of `ais` unless AI is the larger class
+    linked = {r["human_id"] for r in kept_ai}
+    kept_human: list[dict] = []
+    for index in sorted(bins):
+        humans, ais = bins[index][0], bins[index][1]
+        kept_human += sample_by_tier(humans, len(ais), lambda r: 0 if r["human_id"] in linked else 1, rng)
+    return kept_human + kept_ai
+
+
+def count_pairs(records: list[dict]) -> int:
+    """AI rows whose human row (same human_id) is also in `records`."""
+    human_ids = {r["human_id"] for r in records if r["label"] == 0}
+    return sum(r["label"] == 1 and r["human_id"] in human_ids for r in records)
 
 
 def ks_statistic(a, b) -> float | None:
@@ -711,6 +758,10 @@ def main(argv=None) -> int:
     else:
         final = length_match(kept, args.seed)
     ks_after = ks_by_label(final)
+    pairs = {
+        "ai_rows_before_matching": sum(r["label"] == 1 for r in kept), "pairs_before_matching": count_pairs(kept),
+        "ai_rows_final": sum(r["label"] == 1 for r in final), "pairs_final": count_pairs(final),
+    }
     bins = bin_table(kept, final)
     summary = summarize(final)
 
@@ -723,6 +774,8 @@ def main(argv=None) -> int:
         print_counts("After length matching (final)", summary)
         print_lengths("after length matching (final)", summary)
     print(f"\nKS statistic, human vs ai length: before {ks_before}, after {ks_after}")
+    print(f"Topic pairs (AI rows whose human row is in the set): before matching {pairs['pairs_before_matching']} of "
+          f"{pairs['ai_rows_before_matching']} AI rows, final {pairs['pairs_final']} of {pairs['ai_rows_final']}")
     print("Latin-letter words per 1,000 chars: " + ", ".join(
         f"{stage} " + "/".join(f"{k} {v}" for k, v in s["latin_words_per_1000_chars"]["by_label"].items())
         for stage, s in (("before matching", after_cleaning), ("final", summary))
@@ -759,6 +812,7 @@ def main(argv=None) -> int:
         "length_match_bins": bins,
         "final": summary,
         "ks_length": {"before_matching": ks_before, "after_matching": ks_after},
+        "topic_pairs": pairs,
     }
     args.stats.parent.mkdir(parents=True, exist_ok=True)
     args.stats.write_text(json.dumps(stats, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

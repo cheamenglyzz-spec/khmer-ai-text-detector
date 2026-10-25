@@ -3,12 +3,11 @@
 Rows are grouped by `human_id`: a human passage and the AI passage(s) written for it always land
 in the same split, so the classifier is never tested on a topic it saw in training.
 
-1. test_ood: every AI row of the held-out generator (a model family the training set never sees),
-   plus the human rows linked to them. If fewer humans than AI rows are linked, other human
-   passages are added from the length bins where the humans fall short, so test_ood stays
-   balanced by label and length. Humans that have no AI partner are used first; if those run
-   out, a human with an AI partner is taken and that partner row is set aside (`quarantined`,
-   in no split) so the human_id still sits in one split only.
+1. test_ood: the AI rows of the held-out generator (a model family the training set never sees)
+   plus human rows, built per 200-char length bin so that every bin has as many humans as AI rows.
+   Humans linked to a held-out AI row come first, then humans with no AI partner fill the rest of
+   the bin. A linked human that finds no free slot in its bin, and an AI row that finds no human
+   for its bin, is `quarantined`: it is in no split, so each human_id still sits in one place only.
 2. The rest is split 80/10/10 into train/val/test, stratified by group kind (pair / human only /
    AI only) x generator x source as far as the sizes allow, with seed 42.
 
@@ -33,8 +32,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # so `python src/split.py` can import its sibling module as src.clean
 from src.clean import (  # noqa: E402
-    HUMAN_GENERATOR, LABEL_NAMES, N_BINS, bin_label, group_by, ks_by_label, label_name, length_bin,
-    length_stats, read_jsonl, write_jsonl,
+    HUMAN_GENERATOR, N_BINS, bin_label, count_pairs, group_by, ks_by_label, label_name, length_bin,
+    length_stats, read_jsonl, sample_by_tier, write_jsonl,
 )
 
 IN_PATH = ROOT / "data" / "processed" / "clean.jsonl"
@@ -62,84 +61,90 @@ def group_rows(records: list[dict]) -> dict[str, list[dict]]:
     return groups
 
 
-def allocate_by_largest_remainder(total: int, weights: dict[int, int]) -> dict[int, int]:
-    """Split `total` over the keys in proportion to `weights`, never giving a key more than its weight."""
-    weight_sum = sum(weights.values())
-    if total <= 0 or weight_sum == 0:
-        return {k: 0 for k in weights}
-    total = min(total, weight_sum)
-    shares = {k: total * w / weight_sum for k, w in weights.items()}
-    alloc = {k: min(int(s), weights[k]) for k, s in shares.items()}
-    by_remainder = sorted(weights, key=lambda k: (-(shares[k] - int(shares[k])), k))
-    for k in by_remainder:
-        if sum(alloc.values()) >= total:
-            break
-        if alloc[k] < weights[k]:
-            alloc[k] += 1
-    return alloc
-
-
 def has_ai(rows: list[dict]) -> bool:
     return any(r["label"] == 1 for r in rows)
 
 
-def pick_ood(groups: dict[str, list[dict]], holdout: str, seed: int) -> tuple[set[str], list[dict], dict]:
-    """Choose the groups that form test_ood. Returns (group ids, quarantined rows, info for the report).
+def pick_ood(groups: dict[str, list[dict]], holdout: str, seed: int) -> tuple[list[dict], set[str], list[dict], dict]:
+    """Build test_ood bin by bin. Returns (rows, group ids used up, quarantined rows, info for the report).
 
-    Group ids are taken in sorted order and sampled with a seeded RNG, so the result depends only on
+    In each 200-char length bin, every held-out AI row needs a human row of the same bin:
+      1. humans linked to a held-out AI row (same human_id) go first; one that finds no free slot in its
+         bin is quarantined, so its human_id is still in one place only (the AI row stays in test_ood);
+      2. then humans with no AI partner at all fill the free slots (seeded random pick);
+      3. then, if still short, humans whose partner is another generator's AI row (that partner row is
+         quarantined);
+      4. if the bin has fewer humans than AI rows, the surplus AI rows are quarantined, those whose human
+         is not in test_ood first.
+    Quarantined rows are in no split. Pools are sorted by id before sampling, so the result depends only on
     the data and the seed.
     """
     rng = random.Random(seed)
-    ood_ids = {hid for hid, rows in groups.items() if any(r["label"] == 1 and r["generator"] == holdout for r in rows)}
-    if not ood_ids:
+    held = sorted(
+        (r for rows in groups.values() for r in rows if r["label"] == 1 and r["generator"] == holdout),
+        key=lambda r: r["id"],
+    )
+    if not held:
         have = sorted({r["generator"] for rows in groups.values() for r in rows if r["label"] == 1})
         raise ValueError(f"no AI rows from the held-out generator {holdout!r}; generators present: {have}")
-    quarantined: list[dict] = []  # AI rows of another generator that share a human_id with a held-out row
-    for hid in ood_ids:
-        quarantined += [r for r in groups[hid] if r["label"] == 1 and r["generator"] != holdout]
+    used = {r["human_id"] for r in held}  # groups that can no longer go to train/val/test
+    out = {"other_generator_ai": [], "linked_humans": [], "partner_ai": [], "surplus_ai": []}  # quarantined, by reason
+    for hid in sorted(used):  # a second AI row for the same passage would put the human_id in two splits
+        out["other_generator_ai"] += [r for r in groups[hid] if r["label"] == 1 and r["generator"] != holdout]
 
-    def members(ids):
-        return [r for hid in ids for r in groups[hid] if r["label"] == 0 or r["generator"] == holdout]
+    ai_by_bin: dict[int, list[dict]] = {b: [] for b in range(N_BINS)}
+    for r in held:
+        ai_by_bin[length_bin(r["length"])].append(r)
+    pools = {name: {b: [] for b in range(N_BINS)} for name in ("linked", "unpaired", "paired")}
+    for hid in sorted(groups):
+        for h in groups[hid]:
+            if h["label"] != 0:
+                continue
+            name = "linked" if hid in used else ("paired" if has_ai(groups[hid]) else "unpaired")
+            pools[name][length_bin(h["length"])].append(h)
 
-    rows = members(ood_ids)
-    n_ai = sum(r["label"] == 1 for r in rows)
-    n_linked = len(rows) - n_ai
-    ai_bins = Counter(length_bin(r["length"]) for r in rows if r["label"] == 1)
-    human_bins = Counter(length_bin(r["length"]) for r in rows if r["label"] == 0)
-    shortage = {b: ai_bins[b] - human_bins[b] for b in range(N_BINS) if ai_bins[b] > human_bins[b]}
-    want = allocate_by_largest_remainder(n_ai - n_linked, shortage)
-
-    topup = {"requested": 0, "from_unpaired": 0, "from_paired": 0, "missing": 0}
-    topup_bins = []
+    humans_in: list[dict] = []
+    bins = []
     for b in range(N_BINS):
-        row = {"bin": bin_label(b), "ai": ai_bins[b], "linked_humans": human_bins[b], "requested": want.get(b, 0),
-               "from_unpaired": 0, "from_paired": 0}
-        if row["requested"]:
-            humans_in_bin = sorted(
-                hid for hid, g in groups.items()
-                if hid not in ood_ids and any(r["label"] == 0 and length_bin(r["length"]) == b for r in g)
-            )
-            unpaired = [hid for hid in humans_in_bin if not has_ai(groups[hid])]
-            paired = [hid for hid in humans_in_bin if has_ai(groups[hid])]
-            take = rng.sample(unpaired, min(row["requested"], len(unpaired)))
-            row["from_unpaired"] = len(take)
-            if len(take) < row["requested"]:  # not enough humans without a partner: set the partners aside
-                extra = rng.sample(paired, min(row["requested"] - len(take), len(paired)))
-                row["from_paired"] = len(extra)
-                for hid in extra:
-                    quarantined += [r for r in groups[hid] if r["label"] == 1]
-                take += extra
-            ood_ids.update(take)
-        topup_bins.append(row)
-        topup["requested"] += row["requested"]
-        topup["from_unpaired"] += row["from_unpaired"]
-        topup["from_paired"] += row["from_paired"]
-    topup["missing"] = topup["requested"] - topup["from_unpaired"] - topup["from_paired"]
+        slots = len(ai_by_bin[b])
+        row = {"bin": bin_label(b), "ai": slots, "linked_available": len(pools["linked"][b])}
+        chosen = sample_by_tier(pools["linked"][b], slots, lambda r: 0, rng)
+        row["linked_kept"] = len(chosen)
+        chosen_ids = {h["id"] for h in chosen}
+        out["linked_humans"] += [h for h in pools["linked"][b] if h["id"] not in chosen_ids]
+        row["linked_quarantined"] = len(pools["linked"][b]) - len(chosen)
+        for name in ("unpaired", "paired"):
+            extra = sample_by_tier(pools[name][b], slots - len(chosen), lambda r: 0, rng) if slots > len(chosen) else []
+            row[f"from_{name}"] = len(extra)
+            chosen += extra
+            used.update(h["human_id"] for h in extra)
+            if name == "paired":
+                for h in extra:
+                    out["partner_ai"] += [r for r in groups[h["human_id"]] if r["label"] == 1]
+        row["humans"] = len(chosen)
+        humans_in += chosen
+        bins.append(row)
+
+    human_ids_in = {h["human_id"] for h in humans_in}
+    ai_in: list[dict] = []
+    for b in range(N_BINS):
+        keep = sample_by_tier(ai_by_bin[b], bins[b]["humans"], lambda r: 0 if r["human_id"] in human_ids_in else 1, rng)
+        kept_ids = {r["id"] for r in keep}
+        out["surplus_ai"] += [r for r in ai_by_bin[b] if r["id"] not in kept_ids]
+        bins[b]["ai_kept"] = len(keep)
+        bins[b]["ai_quarantined"] = len(ai_by_bin[b]) - len(keep)
+        ai_in += keep
+
+    rows = humans_in + ai_in
+    quarantined = [r for reason_rows in out.values() for r in reason_rows]
     info = {
-        "holdout": holdout, "ai_rows": n_ai, "linked_humans": n_linked, "topup": topup, "topup_bins": topup_bins,
-        "quarantined_rows": len(quarantined),
+        "holdout": holdout, "ai_rows": len(held), "ai_rows_kept": len(ai_in), "human_rows": len(humans_in),
+        "pairs": count_pairs(rows), "bins": bins,
+        "humans_from": {name: sum(b[key] for b in bins) for name, key in
+                        (("linked", "linked_kept"), ("unpaired", "from_unpaired"), ("paired", "from_paired"))},
+        "quarantined": {reason: len(reason_rows) for reason, reason_rows in out.items()},
     }
-    return ood_ids, quarantined, info
+    return rows, used, quarantined, info
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +189,9 @@ def assign_groups(strata: dict[tuple, list[str]], fractions: dict[str, float], s
 def make_splits(records: list[dict], holdout: str = DEFAULT_HOLDOUT, seed: int = SEED) -> tuple[dict[str, list[dict]], dict]:
     """Return ({split name: rows}, info). Every row of `records` is in exactly one split or quarantined."""
     groups = group_rows(records)
-    ood_ids, quarantined, ood_info = pick_ood(groups, holdout, seed)
+    ood_rows, used, quarantined, ood_info = pick_ood(groups, holdout, seed)
     quarantined_ids = {r["id"] for r in quarantined}
-    rest = {hid: [r for r in rows if r["id"] not in quarantined_ids] for hid, rows in groups.items() if hid not in ood_ids}
+    rest = {hid: [r for r in rows if r["id"] not in quarantined_ids] for hid, rows in groups.items() if hid not in used}
     strata: dict[tuple, list[str]] = {}
     for hid, rows in rest.items():
         strata.setdefault(stratum(rows), []).append(hid)
@@ -195,10 +200,7 @@ def make_splits(records: list[dict], holdout: str = DEFAULT_HOLDOUT, seed: int =
     splits: dict[str, list[dict]] = {name: [] for name in SPLIT_NAMES}
     for hid, rows in rest.items():
         splits[assignment[hid]] += rows
-    for hid in ood_ids:
-        splits["test_ood"] += [
-            r for r in groups[hid] if r["id"] not in quarantined_ids and (r["label"] == 0 or r["generator"] == holdout)
-        ]
+    splits["test_ood"] = ood_rows
     rng = random.Random(seed)
     for name in SPLIT_NAMES:
         splits[name].sort(key=lambda r: r["id"])
@@ -274,17 +276,20 @@ def print_split_tables(summaries: dict[str, dict]) -> None:
 
 def print_ood(info: dict) -> None:
     o = info["ood"]
-    t = o["topup"]
+    q = o["quarantined"]
+    h = o["humans_from"]
     print(f"\n=== test_ood (held out: {o['holdout']}) ===")
-    print(f"AI rows {o['ai_rows']}, linked human rows present {o['linked_humans']}, "
-          f"topped up {t['from_unpaired'] + t['from_paired']} of {t['requested']} requested "
-          f"(from humans without a partner {t['from_unpaired']}, from paired humans {t['from_paired']}, "
-          f"not found {t['missing']})")
-    print(f"quarantined AI rows (set aside so no human_id is split): {o['quarantined_rows']}")
-    for row in o["topup_bins"]:
-        if row["ai"] or row["linked_humans"] or row["requested"]:
-            print(f"  {row['bin']:>10}  ai {row['ai']:>4}  linked humans {row['linked_humans']:>4}  "
-                  f"added {row['from_unpaired'] + row['from_paired']:>3} / {row['requested']:<3}")
+    print(f"AI rows {o['ai_rows']} -> kept {o['ai_rows_kept']}; human rows {o['human_rows']} "
+          f"(linked to a held-out AI row {h['linked']}, no AI partner {h['unpaired']}, partner is another generator {h['paired']}); "
+          f"pairs kept {o['pairs']}")
+    print(f"quarantined (in no split): {sum(q.values())} = linked humans without a free slot {q['linked_humans']}, "
+          f"surplus AI rows {q['surplus_ai']}, partner AI rows of used humans {q['partner_ai']}, "
+          f"other-generator AI rows sharing a passage {q['other_generator_ai']}")
+    print(f"{'bin':>12}{'AI':>5}{'AI kept':>9}{'linked':>8}{'kept':>6}{'+free':>7}{'+paired':>9}{'humans':>8}")
+    for r in o["bins"]:
+        if r["ai"] or r["linked_available"]:
+            print(f"{r['bin']:>12}{r['ai']:>5}{r['ai_kept']:>9}{r['linked_available']:>8}{r['linked_kept']:>6}"
+                  f"{r['from_unpaired']:>7}{r['from_paired']:>9}{r['humans']:>8}")
 
 
 def print_samples(splits: dict[str, list[dict]], seed: int = SEED) -> None:
@@ -343,6 +348,8 @@ def main(argv=None) -> int:
         "test_ood": info["ood"],
         "quarantined": {
             "rows": len(quarantined),
+            "by_reason": info["ood"]["quarantined"],
+            "by_label": dict(sorted(Counter(label_name(r) for r in quarantined).items())),
             "by_generator": dict(sorted(Counter(r["generator"] for r in quarantined).items())),
         },
         "notes": notes,

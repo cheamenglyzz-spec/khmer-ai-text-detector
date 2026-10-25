@@ -8,6 +8,12 @@ Human passages are first cleaned with the exact per-text rules of step 3 (src/cl
 clean_human_text). Passages step 3 would drop are left out of the assignment, and the
 prompts (target length, paragraph count, web_hint opening) are built from the cleaned text.
 
+The assignment is frozen in data/generated/plan.jsonl (one task per line, prompts included).
+The first real run writes it; every later run, including each rerun of run_generation.ps1, loads
+it and ignores human.csv and src/clean.py. Otherwise any change to the cleaning rules would
+reshuffle which generator writes which passage while a run is in progress. `--rebuild-plan`
+replaces it on purpose; a plan built for other generators than --generators is an error.
+
 Output (append-only JSONL, flushed after every record, doubles as the checkpoint):
     data/generated/ai_raw.jsonl      one record per success
     data/generated/ai_errors.jsonl   one record per failed row (the run continues)
@@ -20,6 +26,7 @@ Usage:
     python src/generate_ai.py --check-models           # confirm the model ids with your keys
     python src/generate_ai.py --limit 20               # small real test (5 per generator)
     python src/generate_ai.py                          # full run (resumable, Ctrl+C is safe)
+    python src/generate_ai.py --rebuild-plan           # build a new frozen plan from human.csv and clean.py
     python src/generate_ai.py --generators gemini:gemini-3.1-flash-lite,groq:openai/gpt-oss-120b@4
         (optional "@seconds" after a model overrides its minimum request interval)
 """
@@ -35,7 +42,7 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -50,10 +57,10 @@ from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # so `python src/generate_ai.py` can import its sibling module as src.clean
-from src.clean import clean_human_text  # noqa: E402
 
 HUMAN_CSV = ROOT / "data" / "human.csv"
 OUT_PATH = ROOT / "data" / "generated" / "ai_raw.jsonl"
+PLAN_PATH = ROOT / "data" / "generated" / "plan.jsonl"  # the frozen assignment, see the module docstring
 ERRORS_NAME = "ai_errors.jsonl"  # lives next to the output file unless --errors is given
 
 SEED = 42
@@ -260,6 +267,8 @@ def clean_human(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     Returns the surviving rows, with `text` replaced by the cleaned text, and the number of
     excluded rows per source (step 3 would drop them, so generating for them wastes quota).
     """
+    from src.clean import clean_human_text  # only needed when a plan is built; a frozen plan never imports it
+
     cleaned = [clean_human_text(text) for text in df["text"]]
     keep = pd.Series([c is not None for c in cleaned], index=df.index)
     excluded = {str(src): int(n) for src, n in df.loc[~keep, "source"].value_counts().sort_index().items()}
@@ -304,6 +313,49 @@ def build_assignment(df: pd.DataFrame, specs: list[GeneratorSpec], seed: int = S
         )
         i += 1
     return tasks
+
+
+def write_plan(path: Path, tasks: list[Task]) -> None:
+    """Write the frozen plan atomically (temp file, then replace), so a crash never leaves a half plan."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        for task in tasks:
+            f.write(json.dumps(asdict(task), ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def load_plan(path: Path) -> list[Task]:
+    """Read a frozen plan, ordered by position. Strict: a bad line, a missing field or a repeated human_id is an error."""
+    names = [f.name for f in fields(Task)]
+    tasks: list[Task] = []
+    with open(path, "rb") as f:
+        for n, raw in enumerate(f, 1):
+            if not raw.strip():
+                continue
+            try:
+                data = json.loads(raw.decode("utf-8"))
+                tasks.append(Task(**{name: data[name] for name in names}))
+            except (ValueError, KeyError, TypeError) as exc:
+                raise ValueError(f"{path.name} line {n} is not a valid plan row ({type(exc).__name__}: {exc})") from exc
+    if not tasks:
+        raise ValueError(f"{path.name} is empty")
+    if len({t.human_id for t in tasks}) != len(tasks):
+        raise ValueError(f"{path.name} has a repeated human_id")
+    return sorted(tasks, key=lambda t: t.position)
+
+
+def plan_generator_problem(tasks: list[Task], specs: list[GeneratorSpec]) -> str | None:
+    """A message if the plan was built for other generators than the ones asked for, else None."""
+    in_plan, wanted = {t.generator for t in tasks}, {s.key for s in specs}
+    if in_plan == wanted:
+        return None
+    return (
+        f"the frozen plan is for generators {sorted(in_plan)} but --generators is {sorted(wanted)}; "
+        "pass --rebuild-plan to replace the plan (the saved texts are kept)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1005,8 +1057,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--generators", default=DEFAULT_GENERATORS, help="provider:model[@interval_s],... (default: %(default)s)")
     p.add_argument("--out", type=Path, default=OUT_PATH, help="output JSONL (default: %(default)s)")
     p.add_argument("--errors", type=Path, help=f"error JSONL (default: {ERRORS_NAME} next to --out)")
-    p.add_argument("--human", type=Path, default=HUMAN_CSV, help="human passages CSV (default: %(default)s)")
-    p.add_argument("--seed", type=int, default=SEED)
+    p.add_argument("--human", type=Path, default=HUMAN_CSV, help="human passages CSV, read only when the plan is built (default: %(default)s)")
+    p.add_argument("--plan", type=Path, default=PLAN_PATH, help="frozen plan JSONL, loaded if it exists (default: %(default)s)")
+    p.add_argument("--rebuild-plan", action="store_true", help="build the plan again from human.csv and overwrite the plan file")
+    p.add_argument("--seed", type=int, default=SEED, help="seed for building a plan (a loaded plan keeps its own assignment)")
     p.add_argument("--temperature", type=float, default=TEMPERATURE)
     p.add_argument("--max-tokens", type=int, default=MAX_OUTPUT_TOKENS, help="max output tokens per request")
     p.add_argument("--dry-run", action="store_true", help="show the plan and example prompts; no API calls, no keys needed")
@@ -1030,14 +1084,31 @@ def main(argv=None) -> int:
     if args.check_models:
         return check_models(specs)
 
-    df = load_human(args.human)
-    n_loaded = len(df)
-    df, excluded = clean_human(df)
-    print(
-        f"Human passages: {n_loaded} loaded, {len(df)} kept after step-3 cleaning, "
-        f"{n_loaded - len(df)} excluded ({', '.join(f'{s} {n}' for s, n in excluded.items()) or 'none'})"
-    )
-    tasks = build_assignment(df, specs, args.seed)
+    if args.plan.exists() and not args.rebuild_plan:
+        try:
+            tasks = load_plan(args.plan)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        problem = plan_generator_problem(tasks, specs)
+        if problem:
+            print(f"error: {problem}", file=sys.stderr)
+            return 2
+        print(f"Using frozen plan {args.plan}: {len(tasks)} rows")
+    else:
+        df = load_human(args.human)
+        n_loaded = len(df)
+        df, excluded = clean_human(df)
+        print(
+            f"Human passages: {n_loaded} loaded, {len(df)} kept after step-3 cleaning, "
+            f"{n_loaded - len(df)} excluded ({', '.join(f'{s} {n}' for s, n in excluded.items()) or 'none'})"
+        )
+        tasks = build_assignment(df, specs, args.seed)
+        if args.dry_run:
+            print(f"(dry run: the plan is not written to {args.plan})")
+        else:
+            write_plan(args.plan, tasks)
+            print(f"Wrote frozen plan {args.plan}: {len(tasks)} rows")
     if args.limit is not None:
         tasks = tasks[: args.limit]
     out_path = args.out
