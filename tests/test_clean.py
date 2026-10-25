@@ -411,3 +411,31 @@ def test_clean_and_filter_end_to_end():
     assert run.events["human"]["residue_dropped"] == 0
     assert run.events["ai"]["end_trimmed"] == 1
     assert run.before["human"]["ends_with_sentence_end"] == 0.0
+
+
+# -- read_jsonl -------------------------------------------------------------
+def write_bytes(path, *lines):
+    path.write_bytes(b"".join(lines))
+    return path
+
+
+def test_read_jsonl_skips_a_partial_last_line_with_a_warning(tmp_path, capsys):
+    good = ('{"id": "a", "text": "%s"}\n' % SENTENCE).encode("utf-8")
+    partial = ('{"id": "b", "text": "%s' % SENTENCE).encode("utf-8")[:-4]  # cut mid-character, no newline
+    path = write_bytes(tmp_path / "ai.jsonl", good, b"\n", good, partial)
+    records = clean.read_jsonl(path)
+    assert [r["id"] for r in records] == ["a", "a"] and records[0]["text"] == SENTENCE
+    assert "last line" in capsys.readouterr().err
+
+
+def test_read_jsonl_raises_on_a_bad_line_in_the_middle(tmp_path):
+    good = ('{"id": "a", "text": "%s"}\n' % SENTENCE).encode("utf-8")
+    path = write_bytes(tmp_path / "ai.jsonl", good, b'{"id": "b", "te\n', good)
+    with pytest.raises(ValueError, match="line 2"):
+        clean.read_jsonl(path)
+
+
+def test_read_jsonl_complete_last_line_without_newline(tmp_path, capsys):
+    path = write_bytes(tmp_path / "ai.jsonl", b'{"id": "a"}\n', b'{"id": "b"}')
+    assert [r["id"] for r in clean.read_jsonl(path)] == ["a", "b"]
+    assert capsys.readouterr().err == ""

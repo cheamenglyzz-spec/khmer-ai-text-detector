@@ -331,19 +331,18 @@ def load_human(path: Path) -> list[dict]:
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    """Read records, skipping blank or unparseable lines (a live writer may leave a half line)."""
+    """Read records. A live writer may leave a half-written last line: that one is skipped with a
+    warning. An unparseable line anywhere else means a corrupt file and raises ValueError."""
+    with open(path, "rb") as f:  # decode per line, so one bad line is reported by number
+        lines = [(n, raw) for n, raw in enumerate(f, 1) if raw.strip()]
     records: list[dict] = []
-    bad = 0
-    with open(path, "rb") as f:  # decode per line: one bad line must not hide the rest
-        for raw in f:
-            if not raw.strip():
-                continue
-            try:
-                records.append(json.loads(raw.decode("utf-8")))
-            except ValueError:  # includes JSONDecodeError and UnicodeDecodeError
-                bad += 1
-    if bad:
-        print(f"WARNING: skipped {bad} unparseable line(s) in {path.name}", file=sys.stderr)
+    for i, (n, raw) in enumerate(lines):
+        try:
+            records.append(json.loads(raw.decode("utf-8")))
+        except ValueError as exc:  # includes JSONDecodeError and UnicodeDecodeError
+            if i < len(lines) - 1:
+                raise ValueError(f"{path.name} line {n} is not valid JSON: {exc}") from exc
+            print(f"WARNING: skipped an unparseable last line ({len(raw)} bytes) in {path.name}", file=sys.stderr)
     return records
 
 
@@ -679,7 +678,11 @@ def main(argv=None) -> int:
     args = parse_args(argv)
 
     human = load_human(args.human)
-    ai = load_ai(args.ai)
+    try:
+        ai = load_ai(args.ai)
+    except ValueError as exc:  # a corrupt line in the middle of an AI file
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if not ai:
         print("error: no AI records found in " + ", ".join(str(p) for p in args.ai), file=sys.stderr)
         return 2
