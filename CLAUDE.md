@@ -36,7 +36,7 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
 - Steps 4–5 scripts READY: `src/split.py`, `src/baseline.py`. Their reports in `reports/` are from partial data; rerun steps 3–5 once generation is done.
 - Step 6 script READY, not yet run on a GPU: `src/finetune.py` (logic, CPU smoke-tested) + `notebooks/02_finetune_xlmr.ipynb` (Colab driver).
   - Colab reads the splits from Drive `MyDrive/khmer-ai-text-detector/splits/` and writes the model and reports back to Drive.
-  - The GitHub repo is private: the notebook clones with a `GITHUB_TOKEN` Colab secret.
+  - The GitHub repo is public, so the notebook clones without a token (`USE_TOKEN = True` + a `GITHUB_TOKEN` Colab secret if it goes private).
   - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); check this in step 7.
 
 ## Layout
