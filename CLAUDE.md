@@ -33,6 +33,11 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
   - First smoke-test output was moved to `data/generated/old_smoke_test/`.
 - Step 3 script READY: `src/clean.py` (tests in `tests/`). Same rules for both classes: strip invisible chars (gpt-oss adds U+200B), Wikipedia footers, title/URL/wikitext and fragment lines, trim to last sentence end, filter, dedup, length-match per 200-char bin.
   - Known leftover: inline site-nav text in some mc4 passages (e.g. "- Kampuchea Thmey Home ...").
+- Steps 4–5 scripts READY: `src/split.py`, `src/baseline.py`. Their reports in `reports/` are from partial data; rerun steps 3–5 once generation is done.
+- Step 6 script READY, not yet run on a GPU: `src/finetune.py` (logic, CPU smoke-tested) + `notebooks/02_finetune_xlmr.ipynb` (Colab driver).
+  - Colab reads the splits from Drive `MyDrive/khmer-ai-text-detector/splits/` and writes the model and reports back to Drive.
+  - The GitHub repo is private: the notebook clones with a `GITHUB_TOKEN` Colab secret.
+  - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); check this in step 7.
 
 ## Layout
 ```
