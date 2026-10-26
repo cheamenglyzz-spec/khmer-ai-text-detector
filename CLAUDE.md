@@ -34,9 +34,10 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
 - Step 3 script READY: `src/clean.py` (tests in `tests/`). Same rules for both classes: strip invisible chars (gpt-oss adds U+200B), Wikipedia footers, title/URL/wikitext and fragment lines, trim to last sentence end, filter, dedup, length-match per 200-char bin.
   - Known leftover: inline site-nav text in some mc4 passages (e.g. "- Kampuchea Thmey Home ...").
 - Steps 4–5 scripts READY: `src/split.py`, `src/baseline.py`. Their reports in `reports/` are from partial data; rerun steps 3–5 once generation is done.
-- Step 6 script READY, not yet run on a GPU: `src/finetune.py` (logic, CPU smoke-tested) + `notebooks/02_finetune_xlmr.ipynb` (Colab driver).
-  - Colab reads the splits from Drive `MyDrive/khmer-ai-text-detector/splits/` and writes the model and reports back to Drive.
-  - The GitHub repo is public, so the notebook clones without a token (`USE_TOKEN = True` + a `GITHUB_TOKEN` Colab secret if it goes private).
+- Step 6 READY and run once on a Colab T4 (2026-10-26, partial data: 1,404 train rows; 150 s): `src/finetune.py` + `notebooks/02_finetune_xlmr.ipynb`.
+  - Results in `reports/step6_xlmr_*`: F1 val 0.951 / test 0.978 / test_ood 0.949, a bit under the TF-IDF baseline; all errors but one are humans called AI. Rerun on the full data.
+  - Colab route: `python src/make_colab_bundle.py` makes `colab_bundle.zip` (code + splits, gitignored); drag it into the root of My Drive, open `Colab Notebooks/02_finetune_xlmr.ipynb` in Drive, T4, Run all. Outputs go to Drive `khmer-ai-text-detector/`.
+  - The GitHub repo is still private (making it public did not take effect), so the notebook's `CODE_SOURCE = "github"` path needs `USE_TOKEN = True` + a `GITHUB_TOKEN` secret.
   - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); check this in step 7.
 
 ## Layout

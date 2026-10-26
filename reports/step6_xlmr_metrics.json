@@ -1,0 +1,242 @@
+{
+  "config": {
+    "model": "xlm-roberta-base",
+    "seed": 42,
+    "max_length": 512,
+    "learning_rate": 2e-05,
+    "epochs": 3,
+    "batch_size": 16,
+    "warmup_ratio": 0.1,
+    "weight_decay": 0.01,
+    "max_steps": -1,
+    "limit": 0,
+    "splits_dir": "/content/khmer-ai-text-detector/data/processed/splits",
+    "select_by": "val f1 (ai = positive)"
+  },
+  "environment": {
+    "device": "cuda (Tesla T4)",
+    "fp16": true,
+    "torch": "2.11.0+cu130",
+    "transformers": "5.20.2"
+  },
+  "rows": {
+    "train": 1404,
+    "val": 175,
+    "test": 175,
+    "test_ood": 56
+  },
+  "rows_by_label": {
+    "train": {
+      "human": 703,
+      "ai": 701
+    },
+    "val": {
+      "human": 87,
+      "ai": 88
+    },
+    "test": {
+      "human": 87,
+      "ai": 88
+    },
+    "test_ood": {
+      "human": 28,
+      "ai": 28
+    }
+  },
+  "truncation": {
+    "train": {
+      "n": 1404,
+      "truncated": 766,
+      "fraction": 0.5456,
+      "tokens_mean": 518.4,
+      "tokens_median": 541.0,
+      "tokens_max": 1069,
+      "fraction_by_label": {
+        "human": 0.5946,
+        "ai": 0.4964
+      }
+    },
+    "val": {
+      "n": 175,
+      "truncated": 97,
+      "fraction": 0.5543,
+      "tokens_mean": 520.7,
+      "tokens_median": 557.0,
+      "tokens_max": 975,
+      "fraction_by_label": {
+        "human": 0.5862,
+        "ai": 0.5227
+      }
+    },
+    "test": {
+      "n": 175,
+      "truncated": 88,
+      "fraction": 0.5029,
+      "tokens_mean": 508.5,
+      "tokens_median": 513.0,
+      "tokens_max": 990,
+      "fraction_by_label": {
+        "human": 0.5747,
+        "ai": 0.4318
+      }
+    },
+    "test_ood": {
+      "n": 56,
+      "truncated": 29,
+      "fraction": 0.5179,
+      "tokens_mean": 505.8,
+      "tokens_median": 523.0,
+      "tokens_max": 930,
+      "fraction_by_label": {
+        "human": 0.6071,
+        "ai": 0.4286
+      }
+    }
+  },
+  "training": {
+    "train_seconds": 150.0,
+    "steps": 264,
+    "train_loss": 0.2663,
+    "best_val_f1": 0.9514,
+    "best_checkpoint": "checkpoint-264",
+    "val_by_epoch": [
+      {
+        "epoch": 1.0,
+        "step": 88,
+        "val_loss": 0.2579,
+        "val_f1": 0.9026,
+        "val_accuracy": 0.8914
+      },
+      {
+        "epoch": 2.0,
+        "step": 176,
+        "val_loss": 0.2787,
+        "val_f1": 0.9462,
+        "val_accuracy": 0.9429
+      },
+      {
+        "epoch": 3.0,
+        "step": 264,
+        "val_loss": 0.1912,
+        "val_f1": 0.9514,
+        "val_accuracy": 0.9486
+      }
+    ]
+  },
+  "metrics": {
+    "val": {
+      "n": 175,
+      "accuracy": 0.9486,
+      "precision": 0.9072,
+      "recall": 1.0,
+      "f1": 0.9514,
+      "roc_auc": 0.9936,
+      "confusion_matrix": {
+        "tn": 78,
+        "fp": 9,
+        "fn": 0,
+        "tp": 88
+      }
+    },
+    "test": {
+      "n": 175,
+      "accuracy": 0.9771,
+      "precision": 0.9667,
+      "recall": 0.9886,
+      "f1": 0.9775,
+      "roc_auc": 0.9978,
+      "confusion_matrix": {
+        "tn": 84,
+        "fp": 3,
+        "fn": 1,
+        "tp": 87
+      }
+    },
+    "test_ood": {
+      "n": 56,
+      "accuracy": 0.9464,
+      "precision": 0.9032,
+      "recall": 1.0,
+      "f1": 0.9492,
+      "roc_auc": 1.0,
+      "confusion_matrix": {
+        "tn": 25,
+        "fp": 3,
+        "fn": 0,
+        "tp": 28
+      }
+    }
+  },
+  "breakdowns": {
+    "val": {
+      "ai_recall_by_generator": {
+        "gemini-3.1-flash-lite": {
+          "n": 61,
+          "recall": 1.0
+        },
+        "gemma-4-31b-it": {
+          "n": 3,
+          "recall": 1.0
+        },
+        "openai/gpt-oss-120b": {
+          "n": 24,
+          "recall": 1.0
+        }
+      },
+      "human_accuracy_by_source": {
+        "mc4_web": {
+          "n": 46,
+          "accuracy": 0.913
+        },
+        "wikipedia": {
+          "n": 41,
+          "accuracy": 0.878
+        }
+      }
+    },
+    "test": {
+      "ai_recall_by_generator": {
+        "gemini-3.1-flash-lite": {
+          "n": 61,
+          "recall": 1.0
+        },
+        "gemma-4-31b-it": {
+          "n": 3,
+          "recall": 1.0
+        },
+        "openai/gpt-oss-120b": {
+          "n": 24,
+          "recall": 0.9583
+        }
+      },
+      "human_accuracy_by_source": {
+        "mc4_web": {
+          "n": 46,
+          "accuracy": 0.9783
+        },
+        "wikipedia": {
+          "n": 41,
+          "accuracy": 0.9512
+        }
+      }
+    },
+    "test_ood": {
+      "ai_recall_by_generator": {
+        "qwen/qwen3.8-27b": {
+          "n": 28,
+          "recall": 1.0
+        }
+      },
+      "human_accuracy_by_source": {
+        "mc4_web": {
+          "n": 14,
+          "accuracy": 0.7857
+        },
+        "wikipedia": {
+          "n": 14,
+          "accuracy": 1.0
+        }
+      }
+    }
+  }
+}
