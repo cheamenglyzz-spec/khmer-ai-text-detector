@@ -193,7 +193,7 @@ Passages are kept at 300-2,500 characters.
 
 **Files.** `app/app.py` (page), `app/detector.py` (logic), `app/examples.json`, `app/requirements.txt`, `app/README.md` (Hugging Face Spaces header); tests in `tests/test_detector.py`.
 
-**Still to do.** Deploy to Hugging Face Spaces (copy `src/clean.py` and the model in), retrain on full data, add the XLM-R backend, pick a license, and have a Khmer reader check the Khmer heading.
+**Still to do.** Deploy to Hugging Face Spaces (copy `src/clean.py` and the model in), retrain on full data, add the XLM-R backend, and have a Khmer reader check the Khmer heading.
 
 ### Step 9. Publish (planned)
 
@@ -333,6 +333,12 @@ Each record has: `text, label, source, generator, url, date, length`.
 - Respect API rate limits: retry with backoff and resume from checkpoints.
 - After each step, report counts, the length distribution and a few random samples.
 
+## License
+
+- **Code** (everything in this repository): MIT, see [LICENSE](LICENSE).
+- **Dataset** (to be published on Hugging Face): CC BY-SA 4.0. Khmer Wikipedia text is CC BY-SA 4.0, which requires the same license for shared work built on it. The mC4 web text comes from Common Crawl via AllenAI's mC4 (ODC-BY), which asks for attribution. The AI texts were made with the Gemini API and Groq, whose terms of use also apply to them.
+- **Model** (to be published): follows the code, MIT, with the dataset's attribution noted in the model card.
+
 ## Project journal
 
 Append new entries at the bottom.
@@ -343,3 +349,4 @@ Append new entries at the bottom.
 - 2026-10-25: Cleaning asymmetry and the space-before-"។" shortcut found and fixed. Generation plan frozen. Steps 3-5 scripts ready. Generation stopped silently at 22:18.
 - 2026-10-26: First step 6 run on a Colab T4 with partial data (150 s). Lost about 23 hours of generation; restarted at 21:46. 1,478 of 7,230 AI texts done.
 - 2026-10-29: README rewritten as a project journal. Generation at 3,189 of 7,230 AI texts. Found that PC downtime, not quotas, was the main slowdown since 2026-10-26. Step 3 now strips website navigation, site names and headline lines (three new shortcuts found). Step 7 evaluation and paraphrase scripts built and tested on partial data. Step 8 Streamlit demo built and checked in a browser (desktop and phone width).
+- 2026-10-29: License chosen: MIT for the code, CC BY-SA 4.0 for the dataset.

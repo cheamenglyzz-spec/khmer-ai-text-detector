@@ -7,7 +7,7 @@ sdk: streamlit
 python_version: "3.12"
 app_file: app.py
 pinned: false
-license: mit # placeholder: the repo has no LICENSE file yet; confirm before publishing
+license: mit
 ---
 
 # Khmer AI-Text Detector (demo)

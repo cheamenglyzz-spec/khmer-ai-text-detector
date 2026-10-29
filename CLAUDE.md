@@ -41,7 +41,7 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
   - The GitHub repo is still private (making it public did not take effect), so the notebook's `CODE_SOURCE = "github"` path needs `USE_TOKEN = True` + a `GITHUB_TOKEN` secret.
   - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); on the partial test set the truncated texts had no errors.
 - Step 7 READY: `src/evaluate.py` (baseline locally, `--model xlmr` on Colab via the optional last section of notebook 02, or `--predictions` file mode) and `src/paraphrase.py` (Gemini paraphrases of ~150 AI + 150 human test rows -> `data/eval/paraphrased.jsonl`). Run paraphrase.py after generation finishes: gemini-3.1-flash-lite allows 500 requests/day and the generation run uses them; make the Colab bundle after it so Colab gets the file.
-- Step 8 BUILT (local, not deployed): `app/app.py` + `app/detector.py`, baseline backend; run `.venv\Scripts\python.exe -m streamlit run app/app.py`. After the full rerun: re-pick `app/examples.json` (a test asserts their labels), flip `TRAINED_ON_PARTIAL_DATA` in app.py, add the XLM-R backend. Open: license (YAML has a placeholder `mit`), Khmer heading wording unchecked.
+- Step 8 BUILT (local, not deployed): `app/app.py` + `app/detector.py`, baseline backend; run `.venv\Scripts\python.exe -m streamlit run app/app.py`. After the full rerun: re-pick `app/examples.json` (a test asserts their labels), flip `TRAINED_ON_PARTIAL_DATA` in app.py, add the XLM-R backend. Open: Khmer heading wording unchecked.
 
 ## Layout
 ```
@@ -54,6 +54,7 @@ reports/         figures, metrics, final report
 ```
 
 ## Conventions
+- Licenses: code MIT (`LICENSE`), dataset CC BY-SA 4.0 (Wikipedia share-alike; mC4 ODC-BY attribution; API terms apply to AI texts).
 - Python 3.10+, dependencies in `requirements.txt`.
 - Each record: `text, label, source, generator, url, date, length`.
 - Labels are integers: `0` = human, `1` = ai.
