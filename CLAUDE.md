@@ -59,3 +59,4 @@ reports/         figures, metrics, final report
 - Fixed random seed (42) for all splits and sampling.
 - Respect API rate limits: retry with backoff, resume from checkpoints.
 - After each step, report the counts, the length distribution and a few random samples.
+- `README.md` is the project's living journal: after each step, result or issue (technical or non-technical), update its step status, results, issues tables and project journal, and bump "Last updated".
