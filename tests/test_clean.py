@@ -1,6 +1,7 @@
 """Tests for the pure functions in src/clean.py (run: python -m pytest tests)."""
 import random
 import sys
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -350,6 +351,366 @@ def test_clean_structure_counts_residue_apart_from_fragments():
     res = clean.clean_structure(text)
     assert res.text == LONG_TEXT
     assert res.residue_dropped == 2 and res.lines_dropped == 1
+
+
+# -- website navigation / boilerplate ----------------------------------------
+NAV_PARA = "ខ្ញុំស្រលាញ់ប្រទេសកម្ពុជា ហើយខ្ញុំក៏ស្រលាញ់ប្រជាជនខ្មែរទាំងអស់។"  # a real body line: >= MIN_LINE_CHARS, ends a sentence
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # breadcrumbs: section names (and a headline) after "Home"; they cannot be told apart, the line goes
+        "Home ព័ត៌មានជាតិ ជាតិទូទៅ សម្តេចតេជោ ហ៊ុន សែន៖ ទេសចរណ៍តាមដងទន្លេ កំពុងធ្វើឲ្យកម្ពុជាក្លាយជាគោលដៅទេសចរណ៍ប្រកប ដោយឧត្ដមភាព",
+        "Home ព័ត៌មាន តារា អីយ៉ាស់! មកមើលសម្រស់កញ្ញា ធី សុវណ្ណថា ពិតជាមិនធម្មតាក្នុងកម្មវិធីប្រកួតសម្រស់អន្តរជាតិ Queen of Spa",
+        "Homeព្រឹត្តិការណ៍ក្ដៅឆ្លៀតឱកាសមន្រ្តីរាជការឈប់សម្រាកថ្ងៃបុណ្យជាតិ ឈ្មួញមានលុយមានអំណាច ចាក់ដីរំលោភចូលចំណីប្រឡាយអូរ",  # glued, no "Content"
+        "Home / Tech / គ្មានថ្ងៃបោកបានទៀតទេ ឧបករណ៍តេស្តថ្មី ឆែកភ្លាមដឹងភ្លាមឆ្នាំងសាក iPhone ហ្សីនឬអាយពីនាយ",
+        "Home / ប្លែកៗ / ព័ត៌មានអន្តរជាតិ / អព្ភូតហេតុដ៏រន្ធត់ ទាំង ១០ ក្នុងប្រវត្តិសាស្ត្រការធ្លាក់យន្តហោះ",
+        "Home›បាល់ទាត់›សម្តេចតេជោ ហ៊ុន សែន ឧបត្ថម្ភ៣៧០០០ដុល្លារ ដល់ជម្រើសជាតិកម្ពុជាក្រោយឡើងជុំទី២ World Cup 2022",
+        "Home > ផលិតផល > ថ្មទូរស័ព្ទអាយហ្វូន។ > អាគុយទូរស័ព្ទ iPhone 6 បូក > អាគុយទូរស័ព្ទថ្មទូរស័ព្ទ 6 ផោន",  # a khan inside the crumbs
+        "Home Nation ចប់បាត់! អ្នកមានឡានជួលឲ្យចិន កុំអាលអរណា…មើលរូបនេះទៅ កឺកឺ លេងជិះដល់ឆ្នេរសមុទ្រហ្មង",  # English section name
+        # "You are here", with the English stamp in front (the year may be garbage) or a "GMT+7" clock
+        "August 25, 2019 4:44 pm You are here:Home ព័ត៌មានថ្មី ព័ត៌មានជាតិ ឈ្មួញឈ្មោះទូចនិងប្រពន្ធឈ្មោះណាតបង្កើនសកម្មភាពដឹកជញ្ជូនឈើ",
+        "February 19, 8474 3:50 pm You are here:Home ព័ត៌មានថ្មី ព័ត៌មានជាតិ ព័ត៌មានខេត្ត-ក្រុង ខេត្តតាកែវ លទ្ធផលការងារ",
+        "You are here: Home / វប្បធម៌ទូទៅ / ប្រវត្តិនៃការចងក្រងវចនានុក្រមខ្មែរ រៀបរាប់ដោយលោក ហ្សក សេដែស",
+        "GMT+7 11:37 Home វិទ្យាសាស្ត្រ វិទ្យាសាស្ត្រជាមុខវិជ្ជាដែលពោរពេញដោយក្ដីញញឹម ក្ដីសប្បាយ។",
+        # a whole "Previous / Next article" line: the linked headline is another article
+        "Previous articleនេះបានសមងារជាជំទាវមែន! លោកជំទាវ ស្រីតូច ចំណាន បង្ហាញមុខក្នុងពិធីដ៏ធំថ្មីៗនេះ",
+        "Next articleមិនធម្មតាទេ!",
+        "Next articleUpdate: ACUចាប់វាយខ្នោះប្រធានមន្ទីរសុរិយោដីខេត្តពោធិ៍សាត់ និងបក្ខពួក២នាក់ទៀត",
+        # blog post headers and tag clouds
+        "Posted By: សុវិចិត្រIn: វិទ្យាសាស្ត្រNo Comments គ្រោះរញ្ជួយដីអាចកើតមានឡើងដោយស្ទើរតែមិនអាចដឹងទុកមុនបាន។ ការខូចខាតអាចមានច្រើនឬមានតិចទៅតាមទំហំន... Read more ក្ហាលីលេ",
+        "Posted by វណ្ណពិសិដ្ឋ in គម្រោងអភិវឌ្ឍន៍ហេដ្ឋារចនាសម្ព័ន្ធផ្សេងៗ. បានបិទការបញ្ចេញមតិ នៅ គម្រោងផ្លូវថ្មើរជើងអមមាត់ទន្លេ",
+        "Posted by: Vantha // ចរាចរណ៍, នគរូបនីយកម្ម, ព័ត៌មាន // ការអភិវឌ្ឍទីក្រុង // មករា 4, 2017",
+        "Tags：កំពតខេត្តព្រះសីហនុគ្រោះថ្នាក់ចរាចរណ៍ច្បាប់ជិះម៉ូតូភ្នំពេញមូលហេតុម៉ូតូរាជធានីសុវត្ថិភាពស្រវឹងស្លាប់",
+        "Tag: លង់ទឹក ផ្តល់ព័ត៌មានទាន់ហេតុការណ៍",
+        # "Read more" teasers (a truncated excerpt that links to another page)
+        "ហេតុការណ៍គ្រោះថ្នាក់ចរាចរណ៍នេះ ... Read More »",
+        "ចូលរួមកិច្ចប្រជុំកំពូលមេគង្គ-ជប៉ុន លើកទី៧នៅទីក្រុងតូក្យូ៖ Read More »",
+        "ប្រតិបត្តិការនេះបានធ្វើឡើងកាលពីព្រឹក... Read more",
+        # copyright footer
+        "ចំនួនអ្នកកំពុងទស្សនា៖ 8IP របស់អ្នក 72.44.48.122 , កាលបរិច្ឆេទ៖ 22 ឧសភា, 2013 រក្សាសិទ្ធិ © 2008 - 2011 គណៈមេធាវីនៃព្រះរាជាណាចក្រកម្ពុជា។",
+    ],
+)
+def test_strip_nav_line_drops_the_whole_line(line):
+    assert clean.strip_nav_line(line) == ""
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        # glued "Home<section>Content " prefix: the real text after it stays, also a headline that ends in "Facebook"
+        (
+            "Homeព័ត៌មានក្នុងស្រុកContent ខួរក្បាលចំណេះដឹងខ្ចាត់ខ្ចាយចេញពីស្ថាប័នរដ្ឋរបៀបណា? ស្ថាប័នរដ្ឋនានាបានប្រឹងប្រែង។",
+            "ខួរក្បាលចំណេះដឹងខ្ចាត់ខ្ចាយចេញពីស្ថាប័នរដ្ឋរបៀបណា? ស្ថាប័នរដ្ឋនានាបានប្រឹងប្រែង។",
+        ),
+        (
+            "Homeព័ត៌មានអន្តរជាតិContent រដ្ឋាភិបាលនិងគណៈកម្មាការថៃប៉ះទង្គិចគ្នាលើសេចក្តីព្រាងរដ្ឋធម្មនុញ្ញថ្មី Facebook",
+            "រដ្ឋាភិបាលនិងគណៈកម្មាការថៃប៉ះទង្គិចគ្នាលើសេចក្តីព្រាងរដ្ឋធម្មនុញ្ញថ្មី Facebook",
+        ),
+        ("HomeសុខភាពContent ផលប៉ះពាល់ធ្ងន់ធ្ងរ។", "ផលប៉ះពាល់ធ្ងន់ធ្ងរ។"),
+        # "Previous article" / "Next article": cut to the end of the line, in any case and anywhere on the line
+        ("សារព័ត៌មាន Previous Article កុមារម្នាក់ស្លាប់ និង៣នាក់ទៀត Next Article អ្នកប្លក់ដែលមានវ័យចំណាស់បំផុត", "សារព័ត៌មាន"),
+        ("ក្រុមហ៊ុនបានប្រកាស។ Next article ខ្ញុំ", "ក្រុមហ៊ុនបានប្រកាស។"),
+        # a "Tag:" in the middle of a line
+        ("អាន៖ ជនសង្ស័យត្រូវសមត្ថកិច្ចឃាត់ខ្លួនភ្លាមៗ Tag: លង់ទឹក ផ្តល់ព័ត៌មានទាន់ហេតុការណ៍", "អាន៖ ជនសង្ស័យត្រូវសមត្ថកិច្ចឃាត់ខ្លួនភ្លាមៗ"),
+        # © photo credits: Latin names (with / and spaces) and a short Khmer name at the end; the caption stays
+        ("អ្នកទោសនៅក្នុងមន្ទីរអប់រំកែប្រែក្នុងប្រទេសកម្ពុជា។ © Licadho", "អ្នកទោសនៅក្នុងមន្ទីរអប់រំកែប្រែក្នុងប្រទេសកម្ពុជា។"),
+        ("ទាមទារឲ្យប្រធានាធិបតីចាកចេញពីមុខតំណែង © REUTERS/Ammar Awad", "ទាមទារឲ្យប្រធានាធិបតីចាកចេញពីមុខតំណែង"),
+        ("នៅថ្ងៃទី ៣០វិច្ឆិកា ២០១៦ ©MUJAHID SAFODIEN / AFP", "នៅថ្ងៃទី ៣០វិច្ឆិកា ២០១៦"),
+        ("បានបើកអង្គសមាជនៅព្រឹកថ្ងៃសៅរ៍ទី២ខែមេសាឆ្នាំ២០១១ © សុវណ្ណរ៉ា", "បានបើកអង្គសមាជនៅព្រឹកថ្ងៃសៅរ៍ទី២ខែមេសាឆ្នាំ២០១១"),
+        ("រូបភាពព្រមាន ចិន © Figaro ដោយ តាន់ ហ្សង់-ហ្វ្រង់ស្វ័រ កាលពីថ្ងៃពុធ", "រូបភាពព្រមាន ចិន ដោយ តាន់ ហ្សង់-ហ្វ្រង់ស្វ័រ កាលពីថ្ងៃពុធ"),  # the byline after the credit stays
+    ],
+)
+def test_strip_nav_line_cuts_only_the_navigation_part(line, expected):
+    assert clean.strip_nav_line(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        NAV_PARA, SENTENCE, LONG_TEXT,  # ordinary Khmer text, as an AI generator writes it
+        "ភ្នំពេញ (Phnom Penh) ជារាជធានីនៃព្រះរាជាណាចក្រកម្ពុជា ហើយក៏ជាទីក្រុងធំជាងគេ។",  # Wikipedia style
+        "ដោយ:វណ្ណៈ/ភ្នំពេញ៖ លោកនាយករដ្ឋមន្ត្រីបានថ្លែងថា ការអភិវឌ្ឍសេដ្ឋកិច្ចកំពុងរីកចម្រើន។",  # byline
+        "ប្រភព៖ ទីភ្នាក់ងារព័ត៌មានជាតិ",  # source credit
+        "Facebook Twitter ចែករំលែក មតិយោបល់",  # share words are content
+        "សូមចុច Home > Settings ដើម្បីបន្តទៅមុខ។",  # "Home" in the middle of a tutorial line
+        "ស្មាតហ្វូននេះនឹងមិនមានប៊ូតុង Home នោះទេ។",
+        "ក្រុម Home United ដែលជាក្រុមដ៏ជោគជ័យមួយនៃដែនដីកោះមួយនេះ។",
+        "Home Credit បានប្រកាសថាខ្លួននឹងបើកសាខាថ្មីនៅខេត្តសៀមរាប។",  # starts with Home, but is a sentence
+        "Homework ជាកិច្ចការផ្ទះដែលសិស្សត្រូវធ្វើ។",
+        "ខ្លឹមសារ (Content) ត្រឹមត្រូវ និង Core Contents Media។",
+        "Previous articles ត្រូវបានចុះផ្សាយរួចហើយ។",
+        "មិត្តភក្តិរបស់នាង Tag រូបរបស់នាងតាមរយៈ Facebook ឲ្យ។",  # "Tag" as a verb, no colon
+        "Read more about Khmer history ដើម្បីដឹងបន្ថែម។",
+        "Posted របស់ខ្ញុំត្រូវបានចែករំលែក។",
+    ],
+)
+def test_strip_nav_line_leaves_real_text_alone(line):
+    assert clean.strip_nav_line(line) == line
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        # the boilerplate and its phone numbers go, whatever the numbers run into
+        (
+            "សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម : 010 299 377 - 012 900 132កម្ពុជាដាក់ប្រព័ន្ធពិនិត្យអ្នកដំណើរ",
+            "កម្ពុជាដាក់ប្រព័ន្ធពិនិត្យអ្នកដំណើរ",
+        ),
+        ("សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម : 010 299 377 - 012 900 132 ក្រសួងសាធារណការពិន័យរថយន្ត", "ក្រសួងសាធារណការពិន័យរថយន្ត"),
+        (
+            "ម្តាយពាក់អាវ និពន្ធដោយ : រួបរួម June-11-2016, 10:33 pm 66 សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម : 010 299 377 - 012 900 132អាជ្ញាធរជាតិ",
+            "ម្តាយពាក់អាវ និពន្ធដោយ : រួបរួម June-11-2016, 10:33 pm 66 អាជ្ញាធរជាតិ",  # the byline is not ours to cut
+        ),
+        ("សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម : 010 299 377 - 012 900 132១២៣ លើកទី", "១២៣ លើកទី"),  # a Khmer number after it stays
+        ("សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម : 010 299 377 - 012 900 132", ""),  # nothing else on the line
+    ],
+)
+def test_strip_nav_line_cuts_the_ad_contact(line, expected):
+    assert clean.strip_nav_line(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "លោកអ្នកក៏អាចទំនាក់ទំនងផ្តល់ព័ត៌មាន និង ផ្សព្វផ្សាយពាណិជ្ជកម្ម បានគ្រប់ពេលតាមរយៈ៖",  # other wording
+        "ទ្រឹស្តីទំនាក់ទំនង ប្រព័ន្ធផ្សព្វផ្សាយ ព័ត៌មាន បណ្តាញផ្សព្វផ្សាយ",
+        "សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្មមកកាន់យើងខ្ញុំតាមទូរស័ព្ទ។",  # no numbers follow
+    ],
+)
+def test_strip_nav_line_leaves_other_contact_text_alone(line):
+    assert clean.strip_nav_line(line) == line
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់មានប្រវត្តិតំណតាំងពីដូនតាសម័យបុរាណ - Amapapa News", "ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់មានប្រវត្តិតំណតាំងពីដូនតាសម័យបុរាណ"),
+        ("ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់ - VAYO FM Radio", "ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់"),
+        ("ហួសចិត្ត! អ្នកកាសែតស្រី ទទួលឆ័ត្រ ពាក់វ៉ែនតាខ្មៅ - Khmerload", "ហួសចិត្ត! អ្នកកាសែតស្រី ទទួលឆ័ត្រ ពាក់វ៉ែនតាខ្មៅ"),
+        ("ក្មេងប្រុសនេះត្រូវចំណាយប៉ុន្មានម៉ោងក្នុង១ថ្ងៃ ដើម្បីហ្វឹកហាត់? (មានវីដេអូ) – CEN", "ក្មេងប្រុសនេះត្រូវចំណាយប៉ុន្មានម៉ោងក្នុង១ថ្ងៃ ដើម្បីហ្វឹកហាត់? (មានវីដេអូ)"),  # en dash
+        ("កំណើនសេដ្ឋកិច្ចលឿនបំផុត ទី៦ ក្នុងពិភពលោក — Cambonomist", "កំណើនសេដ្ឋកិច្ចលឿនបំផុត ទី៦ ក្នុងពិភពលោក"),  # em dash
+        ("សម្តេចតេជោ ហ៊ុន សែន ឧបត្ថម្ភជូនជម្រើសជាតិ ~ knewdaily", "សម្តេចតេជោ ហ៊ុន សែន ឧបត្ថម្ភជូនជម្រើសជាតិ"),  # tilde
+        ("នាំខ្លួនទៅតុលាការហើយ!!! ជនជាតិចិន៣នាក់ដែលនាំលុយចូលប្រទេសកម្ពុជា - Cn Post", "នាំខ្លួនទៅតុលាការហើយ!!! ជនជាតិចិន៣នាក់ដែលនាំលុយចូលប្រទេសកម្ពុជា"),
+        ("ការវះកាត់សសៃឈាមបេះដូង ដោយប្រើប្រព័ន្ធម៉ាស៊ីនតាមដានចលនាលោហិតជាប្រចាំ - Cần Thơ Khmer Online", "ការវះកាត់សសៃឈាមបេះដូង ដោយប្រើប្រព័ន្ធម៉ាស៊ីនតាមដានចលនាលោហិតជាប្រចាំ"),  # accented Latin
+        ("ប្រជាពលរដ្ឋខ្មែរជាប់ឃុំនៅម៉ាឡេស៊ី – 012news", "ប្រជាពលរដ្ឋខ្មែរជាប់ឃុំនៅម៉ាឡេស៊ី"),  # a name with digits
+        ("ធ្វើបច្ចុប្បន្នភាពយុទ្ធសាស្ត្រ – ក្រសួងព័ត៌មាន – Ministry of Information", "ធ្វើបច្ចុប្បន្នភាពយុទ្ធសាស្ត្រ"),  # a Latin name, then a listed Khmer one
+        ("ធ្វើបច្ចុប្បន្នភាពយុទ្ធសាស្ត្រ សមាហរណកម្មកម្ពុជា – ក្រសួងព័ត៌មាន", "ធ្វើបច្ចុប្បន្នភាពយុទ្ធសាស្ត្រ សមាហរណកម្មកម្ពុជា"),  # a listed Khmer name
+        ("ប្រជាពលរដ្ឋជាច្រើនរងគ្រោះដោយទឹកជំនន់ក្នុងខេត្ត - វិទ្យុបារាំងអន្តរជាតិ RFI ខេមរភាសា", "ប្រជាពលរដ្ឋជាច្រើនរងគ្រោះដោយទឹកជំនន់ក្នុងខេត្ត"),  # a name with spaces and Latin letters
+        ("ពិធីសម្ពោធដាក់ឱ្យប្រើប្រាស់ផ្លូវថ្មីនៅក្រុងសៀមរាប - មនោរម្យ.អាំងហ្វូ (ឯកសារ)", "ពិធីសម្ពោធដាក់ឱ្យប្រើប្រាស់ផ្លូវថ្មីនៅក្រុងសៀមរាប"),
+        ("ការស្លាប់របស់វីជេអាលីយ៉ា គឺមានរយៈពេលត្រឹមតែមួយថ្ងៃ - វិទ្យុវាយោ - Cambodia", "ការស្លាប់របស់វីជេអាលីយ៉ា គឺមានរយៈពេលត្រឹមតែមួយថ្ងៃ"),  # Khmer name, then a Latin one
+        ("ប្រមុខការទូតកម្ពុជាប្រាប់អង្គការសហប្រជាជាតិថារដ្ឋាភិបាលកំពុងប្រឈមមុខ - Cambodia - RFI", "ប្រមុខការទូតកម្ពុជាប្រាប់អង្គការសហប្រជាជាតិថារដ្ឋាភិបាលកំពុងប្រឈមមុខ"),  # section, then site
+    ],
+)
+def test_cut_title_suffix_cuts_a_site_name(line, expected):
+    assert clean.cut_title_suffix(line) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ក្រុមហ៊ុន Apple - Google បានសហការគ្នាលើគម្រោងថ្មី",  # an English name inside the headline
+        "ក្រុមហ៊ុន Apple និង Google បានសហការគ្នាលើគម្រោងថ្មី",
+        "លោក ត្រាំ ជួបជាមួយ Elon Musk ក្នុងកិច្ចប្រជុំ - Reuters។",  # a sentence, not a title
+        "ដោយ:វណ្ណៈ៖ ក្រុមហ៊ុនបានប្រកាសថាខ្លួននឹងបើកសាខាថ្មី - Reuters៕",
+        "ឯកឧត្តមបានថ្លែងថា - សូមអរគុណ",  # the tail is Khmer
+        "ឯកឧត្តមបានថ្លែងថា - Apple ជាក្រុមហ៊ុនមួយ",  # the tail mixes Khmer and Latin
+        "ទូរស័ព្ទទំនាក់ទំនង - 012 345 678",  # no letters in the tail
+        "ឧទាហរណ៍-Amapapa News",  # not a spaced dash
+        "ឧទាហរណ៍ -Amapapa News",
+        "ក្រុមហ៊ុនបានប្រកាសផែនការថ្មី - Ministry of Foreign Affairs and International Cooperation",  # too long to be a site name
+        "ក្រុមហ៊ុនបានប្រកាសផែនការថ្មី - One Two Three Four Five Six",  # too many words
+        "Amapapa News - Khmerload",  # no Khmer in the headline
+        # Khmer tails that are not on the list stay: a Wikipedia date range, section words, a longer or shorter name
+        "ស្តេចចិនអ្នកដំបូងគេ (២៥៩ - ២១០ ឆ្នាំមុនគ.ស)",
+        "ស្តេចអាឡិចសាន់ដ័រ ជាអ្នកឈ្នះសង្គ្រាម (៣៥៦ - ៣២៣ ឆ្នាំមុនគ.ស)",
+        "មកមើលវីដេអូចាប់កាន់ចង្កូតលើកដំបូងរបស់ក្រុមហ៊ុនធំមួយ - បច្ចេកវិទ្យា",
+        "រដ្ឋាភិបាលហៅការអំពាវនាវរបស់លោកថាជាការធ្វើរដ្ឋប្រហារ - កម្ពុជា",
+        "ក្រសួងព័ត៌មាន - ក្រសួងការបរទេសនិងសហប្រតិបត្តិការអន្តរជាតិ",  # a listed name at the start of the line
+        "ការផ្សព្វផ្សាយរបស់ក្រសួងព័ត៌មាន ថ្មី - ក្រសួងព័ត៌មាន ថ្មី",  # only an exact match counts
+        "ព័ត៌មាននៅវិទ្យុវាយោ - ក្រសួងព័ត៌មាននិងវិទ្យុវាយោ",  # listed words inside a longer tail
+        "ក្រសួងព័ត៌មាន",  # a listed name with nothing before it
+        "លោកនាយករដ្ឋមន្ត្រីបានថ្លែងថា ការអភិវឌ្ឍកំពុងរីកចម្រើន។ - ក្រសួងព័ត៌មាន",  # a sentence, not a title
+        "ការប្រកួតវគ្គផ្តាច់ព្រ័ត្រ-ក្រសួងព័ត៌មាន",  # not a spaced dash
+        "ភ្នំពេញ (Phnom Penh) ជារាជធានីនៃព្រះរាជាណាចក្រកម្ពុជា ហើយក៏ជាទីក្រុងធំជាងគេ។",
+        LONG_TEXT, NAV_PARA,
+    ],
+)
+def test_cut_title_suffix_leaves_headlines_alone(line):
+    assert clean.cut_title_suffix(line) == line
+
+
+def test_khmer_site_names_are_a_fixed_normalized_list():
+    names = clean.NAV_KHMER_SITE_NAMES
+    assert len(names) == 13 and "ក្រសួងព័ត៌មាន" in names and "វិទ្យុវាយោ" in names
+    for name in names:
+        assert unicodedata.normalize("NFC", name) == name, name  # normalize_text makes every text NFC, so the list must be too
+        assert name == name.strip() and clean.khmer_ratio(name) > 0.5, name
+        assert not any(mark in name for mark in clean.KHMER_STOPS), name
+    assert not {"បច្ចេកវិទ្យា", "ជីវិតនិងសង្គម", "កម្ពុជា"} & names  # section words can end a real headline
+
+
+def test_khmer_site_name_is_cut_from_the_first_line_only():
+    title = "ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់មានប្រវត្តិតំណតាំងពីដូនតាសម័យបុរាណ!"  # a "!" keeps the title through the headline-line rule
+    later = "ក្រុមហ៊ុនបានប្រកាសផែនការថ្មីសម្រាប់ឆ្នាំនេះ - ក្រសួងព័ត៌មាន"
+    assert clean.strip_nav("\n".join([title + " – ក្រសួងព័ត៌មាន", NAV_PARA, later])) == ("\n".join([title, NAV_PARA, later]), 1)
+    text = title + " – ក្រសួងព័ត៌មាន – Ministry of Information\n" + LONG_TEXT
+    assert clean.clean_human_text(text) == title + "\n" + LONG_TEXT  # both names go, the same for an AI text
+    assert clean.process_text(text, is_ai=True).filtered.text == title + "\n" + LONG_TEXT
+
+
+def test_is_site_name():
+    for name in ("Amapapa News", "VAYO FM Radio", "CEN", "Domnung.com", "idol-medias.com", "Cần Thơ Khmer Online", "012news", "D&G Post"):
+        assert clean.is_site_name(name), name
+    for name in ("", "012 345", "ក្រសួង", "Apple ជា", "Ministry of Foreign Affairs and International Cooperation", "A B C D E F", "a/b", "Москва"):
+        assert not clean.is_site_name(name), name
+
+
+def test_strip_nav_cuts_the_site_suffix_from_the_first_line_only():
+    title = "ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់មានប្រវត្តិតំណតាំងពីដូនតាសម័យបុរាណ"
+    later = "ក្រុមហ៊ុនបានប្រកាសផែនការថ្មីសម្រាប់ឆ្នាំនេះ - Amapapa News"
+    text = "\n".join([title + " - Amapapa News", NAV_PARA, later])
+    assert clean.strip_nav(text) == ("\n".join([title, NAV_PARA, later]), 1)  # a later line may be a quotation
+    assert clean.strip_nav(title + " - Amapapa News\n" + "ការទំនាក់ទំនង") == (title + "\nការទំនាក់ទំនង", 1)
+    assert clean.strip_nav(NAV_PARA + "\n" + NAV_PARA) == (NAV_PARA + "\n" + NAV_PARA, 0)
+
+
+def test_site_suffix_and_ad_contact_follow_the_same_rules_for_both_classes():
+    title = "ពិធីចាប់ត្រីនៅបឹងក្រមស្រុកមេមត់មានប្រវត្តិតំណតាំងពីដូនតាសម័យបុរាណ!"  # a "!" keeps the title through the headline-line rule
+    ad = "សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម : 010 299 377 - 012 900 132"
+    text = title + " - Amapapa News\n" + ad + LONG_TEXT
+    human = clean.process_text(text, is_ai=False)
+    ai = clean.process_text(text, is_ai=True)
+    assert human.structure == ai.structure and human.structure.nav_stripped == 2
+    assert human.filtered.text == ai.filtered.text == title + "\n" + LONG_TEXT
+    assert clean.clean_human_text(text) == title + "\n" + LONG_TEXT
+
+
+def test_strip_nav_counts_changed_lines_and_removes_empty_ones():
+    text = "\n".join([
+        "Home ព័ត៌មានជាតិ នយោបាយ សវនាការសំណុំរឿងលោក កឹម សុខា នាព្រឹកនេះ",  # dropped
+        NAV_PARA,  # kept
+        "Next articleមិនធម្មតាទេ!",  # dropped
+        "អ្នកទោសនៅក្នុងមន្ទីរអប់រំកែប្រែក្នុងប្រទេសកម្ពុជា។ © Licadho",  # cut
+    ])
+    assert clean.strip_nav(text) == (NAV_PARA + "\nអ្នកទោសនៅក្នុងមន្ទីរអប់រំកែប្រែក្នុងប្រទេសកម្ពុជា។", 3)
+    assert clean.strip_nav(LONG_TEXT) == (LONG_TEXT, 0)
+
+
+def test_clean_structure_strips_navigation_before_the_fragment_rule():
+    text = "\n".join([
+        "Home ព័ត៌មានជាតិ ជាតិទូទៅ សម្តេចតេជោ ហ៊ុន សែន៖ ទេសចរណ៍តាមដងទន្លេ កំពុងធ្វើឲ្យកម្ពុជាក្លាយជាគោលដៅទេសចរណ៍ប្រកប",
+        NAV_PARA,
+        "Previous articleញ៉ាក់សាច់! គ្រាន់តែគ្រឿងអលង្ការមួយឈុត មានតំលៃដល់ទៅខ្ទង់សែនដុល្លារ",
+        "Next articleសាហាវណាស់!!!",
+        "Tags：គ្រោះថ្នាក់ចរាចរណ៍ច្បាប់ភ្នំពេញរថយន្តរាជធានីវិធីសង្កាត់សង្សារសង្សារសមត្ថកិច្ច",
+        "សារព័ត៌មាន Previous Article កុមារម្នាក់ស្លាប់ Next Article អ្នកប្លក់",  # cut to "សារព័ត៌មាន", then a fragment
+    ])
+    res = clean.clean_structure(text)
+    assert res.text == NAV_PARA
+    assert res.nav_stripped == 5 and res.lines_dropped == 1 and res.residue_dropped == 0
+    same = clean.clean_structure(NAV_PARA)
+    assert same.text == NAV_PARA and same.nav_stripped == 0
+
+
+def test_navigation_rules_are_the_same_for_both_classes():
+    text = "Homeព័ត៌មានក្នុងស្រុកContent " + LONG_TEXT + "\nNext articleមិនធម្មតាទេ!"
+    human = clean.process_text(text, is_ai=False)
+    ai = clean.process_text(text, is_ai=True)
+    assert human.structure == ai.structure and human.structure.nav_stripped == 2
+    assert human.filtered.reason is None and human.filtered.text == ai.filtered.text == LONG_TEXT
+    assert clean.clean_human_text(text) == LONG_TEXT  # what step 2 prompts from
+
+
+def test_navigation_leaves_wikipedia_style_and_ai_text_unchanged():
+    wiki = "ភ្នំពេញ (Phnom Penh) ជារាជធានីនៃព្រះរាជាណាចក្រកម្ពុជា។\n" + LONG_TEXT
+    assert clean.clean_structure(wiki).nav_stripped == 0
+    assert clean.clean_human_text(wiki) == wiki
+    assert clean.clean_human_text(LONG_TEXT) == LONG_TEXT
+
+
+def test_clean_and_filter_counts_navigation_events_per_class():
+    nav_text = "Homeព័ត៌មានក្នុងស្រុកContent " + LONG_TEXT
+    run = clean.clean_and_filter(
+        [pipeline_rec("h1", 0, nav_text), pipeline_rec("h2", 0, LONG_TEXT + " ក")],
+        [pipeline_rec("ai_h1", 1, nav_text, human_id="h1")],
+    )
+    assert {r["id"]: r["text"] for r in run.kept} == {"h1": LONG_TEXT, "h2": LONG_TEXT, "ai_h1": LONG_TEXT}
+    assert run.events["human"]["nav_stripped"] == 1 and run.events["human"]["texts_nav_stripped"] == 1
+    assert run.events["ai"]["nav_stripped"] == 1 and run.events["ai"]["texts_nav_stripped"] == 1
+
+
+# -- headline lines: no sentence-end mark anywhere on the line ---------------
+@pytest.mark.parametrize(
+    "line",
+    [
+        "ពលរដ្ឋមកពីភូមិប្រម៉ាខេត្តក្រចេះដាក់ញត្តិទៅរដ្ឋសភាជាថ្មីឲ្យអន្តរាគមន៍រឿងជម្លោះដីធ្លី",  # an mC4 headline
+        "ជនជាតិចិនមួយក្រុម បាញ់ប្លន់ហាងលក់គជ់យីហោ ហឺហឺនៅខណ្ឌពោធិ៍សែនជ័យ, សមត្ថកិច្ចចាប់បាន២នាក់",
+        "ផ្ទះ ព័ត៌មានជាតិ នយោបាយ និង ការអភិវឌ្ឍន៍ មន្ត្រីក្រសួងធនធានទឹក និងធនាគារអភិវឌ្ឍន៍អាស៊ី ADB",  # the Khmer "Home" breadcrumb
+        "ផ្ទះ > ផលិតផល > បូមបេតុងពាក់ផ្នែក > បូមបេតុងពាក់ស្លាបនិងរង្វង់ > ផ្នែកបូមបេតុង",
+        "ព្រះត្រៃបិដក > សុត្តន្តបិដក > ខុទ្ទកនិកាយ > ខុទ្ទកបាឋ > តិរោកុឌ្ឌសូត្រ",  # a Wikipedia breadcrumb
+        "Language articles with NA population dates",  # a Wikipedia maintenance category
+        "± ប្រព័ន្ធសេដ្ឋកិច្ចបុរាណ (Traditional economic system)",  # a Wikipedia label
+    ],
+)
+def test_headline_lines_without_any_sentence_end_are_dropped(line):
+    assert not clean.has_sentence_end(line)
+    assert clean.drop_headline_lines(line) == ("", 1)
+    assert clean.drop_headline_lines(NAV_PARA + "\n" + line + "\n" + NAV_PARA) == (NAV_PARA + "\n" + NAV_PARA, 1)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        NAV_PARA, SENTENCE, LONG_TEXT,  # ordinary paragraphs, as an AI generator writes them
+        "ក្រុមហ៊ុនបានប្រកាសផែនការថ្មីនៅឆ្នាំនេះ។ ប៉ុន្តែការអនុវត្តនៅមិនទាន់ចាប់ផ្តើមនៅឡើយទេ",  # a mark mid-line, none at the end
+        LONG_TEXT + " ខ្ញុំស្រ",  # a trailing fragment: the trim to the last sentence end handles it later
+        "ភ្នំពេញ (Phnom Penh) ជារាជធានីនៃព្រះរាជាណាចក្រកម្ពុជា ហើយក៏ជាទីក្រុងធំជាងគេ៕",
+        "តើប្រទេសណាមួយដែលមានពលរដ្ឋឆ្លាតជាងគេបង្អស់ក្នុងលោក? អាមេរិក ចិន អត់ទេ",  # "?" and "!" count as marks
+        "ហួសចិត្ត! អ្នកកាសែតស្រី ទទួលឆ័ត្រ ពាក់វ៉ែនតាខ្មៅ អំឡុងពេលធ្វើកិច្ចសម្ភាសន៍",
+    ],
+)
+def test_lines_with_a_sentence_end_mark_anywhere_stay(line):
+    assert clean.has_sentence_end(line)
+    assert clean.drop_headline_lines(line) == (line, 0)
+
+
+def test_clean_structure_counts_headline_lines_apart_from_fragments():
+    text = "\n".join([
+        "ពលរដ្ឋមកពីភូមិប្រម៉ាខេត្តក្រចេះដាក់ញត្តិទៅរដ្ឋសភាជាថ្មីឲ្យអន្តរាគមន៍រឿងជម្លោះដីធ្លី",  # headline
+        "ប្រវត្តិ",  # short fragment
+        NAV_PARA,
+        "Language articles with NA population dates",  # headline
+    ])
+    res = clean.clean_structure(text)
+    assert res.text == NAV_PARA
+    assert res.headline_lines_dropped == 2 and res.lines_dropped == 1 and res.nav_stripped == 0
+    same = clean.clean_structure(NAV_PARA)
+    assert same.text == NAV_PARA and same.headline_lines_dropped == 0
+
+
+def test_headline_rule_is_the_same_for_both_classes_and_empties_a_headline_only_text():
+    headline = "ពលរដ្ឋមកពីភូមិប្រម៉ាខេត្តក្រចេះដាក់ញត្តិទៅរដ្ឋសភាជាថ្មីឲ្យអន្តរាគមន៍រឿងជម្លោះដីធ្លី"
+    text = headline + "\n" + LONG_TEXT
+    human, ai = clean.process_text(text, is_ai=False), clean.process_text(text, is_ai=True)
+    assert human.structure == ai.structure and human.structure.headline_lines_dropped == 1
+    assert human.filtered.text == ai.filtered.text == LONG_TEXT == clean.clean_human_text(text)
+    for is_ai in (False, True):  # nothing is left of a text that is only a headline
+        only = clean.process_text(headline * 5, is_ai=is_ai)
+        assert only.structure.text == "" and only.filtered.reason == "truncated_no_sentence_end"
+    assert clean.clean_human_text(headline * 5) is None
+
+
+def test_clean_and_filter_counts_headline_events_per_class():
+    headline = "ពលរដ្ឋមកពីភូមិប្រម៉ាខេត្តក្រចេះដាក់ញត្តិទៅរដ្ឋសភាជាថ្មីឲ្យអន្តរាគមន៍រឿងជម្លោះដីធ្លី"
+    run = clean.clean_and_filter(
+        [pipeline_rec("h1", 0, headline + "\n" + LONG_TEXT), pipeline_rec("h2", 0, LONG_TEXT)],
+        [pipeline_rec("ai_h1", 1, LONG_TEXT, human_id="h1")],
+    )
+    assert {r["id"]: r["text"] for r in run.kept} == {"h1": LONG_TEXT, "h2": LONG_TEXT, "ai_h1": LONG_TEXT}
+    assert run.events["human"]["headline_lines_dropped"] == 1 and run.events["human"]["texts_headline_lines_dropped"] == 1
+    assert run.events["ai"]["headline_lines_dropped"] == 0
 
 
 # -- shared per-text rules (step 2 imports clean_human_text) ----------------

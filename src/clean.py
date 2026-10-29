@@ -5,9 +5,12 @@ detector cannot learn formatting artifacts (e.g. gpt-oss puts U+200B between Khm
 human text does not; Wikipedia passages carry "See also" footers and one-word headings).
 
 Pipeline: normalize -> cut footer sections -> strip list markers -> drop residue lines (site
-          titles, URLs, wikitext) -> drop short fragment lines -> trim to the last sentence end
-          -> Khmer-ratio / length filters -> copied-hint check -> deduplication -> length
-          matching -> shuffle -> write.
+          titles, URLs, wikitext) -> strip website navigation / boilerplate (breadcrumbs,
+          "Previous / Next article", "Posted by", "Tags:" lines, "Read more" teasers, © credits,
+          the advertising-contact line, the site-name suffix of the title line) -> drop short
+          fragment lines -> drop headline lines (no sentence-end mark anywhere on the line) ->
+          trim to the last sentence end -> Khmer-ratio / length filters -> copied-hint check ->
+          deduplication -> length matching -> shuffle -> write.
 The per-text part (everything up to the length filters) lives in `process_text`; step 2
 (generate_ai.py) calls `clean_human_text` so it only prompts for passages that survive it.
 
@@ -62,6 +65,8 @@ COPY_CHECK_CHARS = 300  # copy check looks at the first N chars of a web_hint AI
 COPY_MIN_SPAN = 60  # ...and drops it if a span this long also appears in the linked human text
 NEAR_DUP_CHARS = 150  # texts with identical first N chars count as near-duplicates
 MIN_LINE_CHARS = 40  # a line shorter than this that does not end a sentence is a fragment (heading, nav, list item)
+# A longer line with no sentence-end mark anywhere on it is a headline / title / label / breadcrumb. An AI text is
+# prose, so such a line is a "this is human" shortcut (measured on the first cleaned set: ~47% of human texts, 0.3% of AI).
 TRUNCATED_FINISH_REASONS = {"length"}  # the API cut these off at the token cap, mid-word
 SENTENCE_ENDS = "។៕?!"  # Khmer khan and bariyoosan, plus ? and !
 NO_SPACE_BEFORE = "។៕៖"  # Khmer marks that get no space before them: human text often has one, AI text almost never
@@ -90,6 +95,45 @@ FOOTER_MARKERS = (
 # Residue lines, dropped from both classes: web/wiki leftovers an AI text never contains.
 SITE_SEPARATOR = " | "  # "headline | site-name" title lines
 WIKITEXT_STARTS = ("{|", "|}", "|-", "{{", "!", "Short description")  # table / template / maintenance lines
+
+# Website navigation / boilerplate that mC4 news pages carry into the text (an AI text never has it, so
+# left in it would be a "this is human" shortcut), removed from both classes. Bylines ("ដោយ:NAME៖"),
+# source credits ("ប្រភព៖") and share words (Facebook, ចែករំលែក) are content and stay. What happens to a line:
+#   dropped whole:  breadcrumb ("Home ...", "You are here:Home ..."; with a glued "Home<section>Content "
+#                   prefix only the prefix goes), "Posted by ...", "Tags: ...", "... Read more" teaser, "© 2011 ..." footer
+#   cut at marker:  "Previous article" / "Next article" and a mid-line "Tags:", to the end of the line (the headline
+#                   after them belongs to another article)
+#   cut in place:   a "© Reuters" photo credit; the advertising-contact boilerplate with its phone numbers
+#   cut at the end of the FIRST line only: a site-name suffix, "<headline> - Amapapa News" (a short Latin-script name after
+#                   a spaced dash, or a listed Khmer one, on a line without a sentence end; " | " title lines are already
+#                   dropped as residue)
+NAV_AD_CONTACT = "សូមទំនាក់ទំនងផ្សព្វផ្សាយពាណិជ្ជកម្ម"  # "Please contact for advertising" + ": 010 299 377 - 012 900 132"
+NAV_TITLE_SEPARATORS = "-–—~"  # hyphen, en dash, em dash, tilde between a title and its site name
+NAV_SITE_NAME_MAX_CHARS = 32
+NAV_SITE_NAME_MAX_WORDS = 5
+# Khmer-script site names that end the title line of mC4 pages ("<headline> – ក្រសួងព័ត៌មាន"). A Khmer name cannot be told
+# from headline text by its shape, so this list is fixed: derived once from data/human.csv (mC4 passages, title line as it
+# reaches strip_nav, Latin names already cut), keeping the tails after the last spaced dash that occur in at least 5
+# distinct passages and are site names; the section words បច្ចេកវិទ្យា, ជីវិតនិងសង្គម and កម្ពុជា (5 each) are left out as
+# they can end a real headline. Not computed at run time, so a rerun gives the same text. Passages per name in the comment.
+NAV_KHMER_SITE_NAMES = frozenset({
+    "វិទ្យុវាយោ",  # 28
+    "កាសែតរូបភាពវៀតណាម",  # 21
+    "នគរដ្រេហ្គន",  # 17
+    "ក្រសួងព័ត៌មាន",  # 17
+    "នគរបាលជាតិ",  # 16
+    "វិទ្យុបារាំងអន្តរជាតិ RFI ខេមរភាសា",  # 14
+    "មនោរម្យ.អាំងហ្វូ (ឯកសារ)",  # 14
+    "ឧត្តមគតិខ្មែរ",  # 13
+    "គ៨៥",  # 9
+    "មន្ទីរព័ត៌មាន ខេត្តត្បូងឃ្មុំ",  # 8
+    "ខ្មែរប៉ុស្ដិ៍",  # 7
+    "ព័ត៌មានទាន់ហេតុការណ៍នៅកម្ពុជា",  # 6
+    "តារាញូស៍",  # 5
+})
+KHMER_STOPS = "។៕"  # Khmer khan and bariyoosan: a line with one is a sentence, not a title
+NAV_ENGLISH_STAMP = r"(?:[A-Z][a-z]{2,8} \d{1,2}, \d{4} \d{1,2}:\d{2} [ap]m|GMT[+-]\d{1,2} \d{1,2}:\d{2})"  # "August 25, 2019 4:44 pm" (the year may be garbage), "GMT+7 11:37"
+NAV_SEPARATORS = "/>›»"  # breadcrumb separators: "Home / News", "Home > News"
 
 DROP_REASONS = (
     "truncated_no_sentence_end",
@@ -125,6 +169,24 @@ _URL = re.compile(r"https?://|www\.", re.IGNORECASE)
 _TEMPLATE_PARAM = re.compile(r"\|[^=|]{1,40}=")  # "| name = value", matched at the start of a line
 _KHMER_CHAR = re.compile("[\u1780-\u17ff\u19e0-\u19ff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]+")
+# Navigation / boilerplate (see NAV_* above). A breadcrumb starts a line, after an optional English stamp and
+# "You are here:", and is "Home" glued to or followed by Khmer ("Homeព័ត៌មាន", "Home ព័ត៌មាន") or a separator
+# ("Home / Tech"). "Home Nation ..." (an English section name) only counts when the line has no Khmer sentence end,
+# so that "Home Credit ... ។" in prose is safe.
+_BREADCRUMB = re.compile(
+    rf"(?:{NAV_ENGLISH_STAMP} )?(?:You are here: ?)?Home"
+    rf"(?:(?=\s*[{re.escape(NAV_SEPARATORS)}]|\s*{_KHMER_CHAR.pattern})|\s+[A-Za-z]+\s+{_KHMER_CHAR.pattern}[^{KHMER_STOPS}]*$)"
+)
+_GLUED_CONTENT = re.compile(rf"Home[^\s{re.escape(NAV_SEPARATORS)}]*?Content\s+")  # "Homeព័ត៌មានក្នុងស្រុកContent <headline>"
+_NAV_LINE = re.compile(
+    r"^(?:(?i:posted by)\b|Tags?[:：])"  # "Posted By: សុវិចិត្រIn: វិទ្យាសាស្ត្រNo Comments ...", "Tags：ក្រសួងច្បាប់..."
+    r"|©\s*\d"  # "រក្សាសិទ្ធិ © 2008 - 2011 ..."
+    r"|(?:\.{2,}|…)\s*(?i:read more)\b|(?i:read more)\s*[»›>]?$"  # "... Read More »"
+)
+_NAV_TAIL = re.compile(r"(?<![A-Za-z])(?:(?i:(?:previous|next) article)(?![a-z])|Tags?[:：])")
+_AD_CONTACT = re.compile(rf"\s*{NAV_AD_CONTACT}\s*[:៖]?\s*[0-9+][0-9 ()+,/-]*[0-9]")  # the phone numbers may run straight into the text after them
+_TITLE_SUFFIX = re.compile(rf"(?P<head>.*\S)\s+[{re.escape(NAV_TITLE_SEPARATORS)}]\s+(?P<name>\S.*)$")  # splits at the LAST spaced dash
+_CREDIT = re.compile(r"\s*©\s*(?:[A-Za-z][A-Za-z0-9 ./&'’-]*|[^\s©]+(?: [^\s©]+){0,2}$)?")  # "© Reuters", "©MUJAHID SAFODIEN / AFP", "© សុវណ្ណរ៉ា"
 
 
 def normalize_text(text: str) -> str:
@@ -200,10 +262,91 @@ def drop_residue_lines(text: str) -> tuple[str, int]:
     return "\n".join(kept), len(lines) - len(kept)
 
 
+def is_site_name(name: str) -> bool:
+    """A short Latin-script name: Latin letters (accented ones too), ASCII digits, spaces and . & ' - only."""
+    letters = [c for c in name if c.isalpha()]
+    return (
+        0 < len(name) <= NAV_SITE_NAME_MAX_CHARS
+        and len(name.split()) <= NAV_SITE_NAME_MAX_WORDS
+        and bool(letters)
+        and all(unicodedata.name(c, "").startswith("LATIN") for c in letters)
+        and all(c.isalpha() or (c.isascii() and c.isdigit()) or c in " .&'’-" for c in name)
+    )
+
+
+def cut_title_suffix(line: str) -> str:
+    """Cut trailing site names ("<Khmer headline> - Amapapa News") off a title line; the line itself if it has none.
+
+    Only the part after the last spaced dash is judged, so an English name inside the headline stays. A name is
+    a short Latin-script one or a listed Khmer one (NAV_KHMER_SITE_NAMES). It is repeated for titles with a section
+    and a site ("<headline> - Cambodia - RFI", "<headline> – ក្រសួងព័ត៌មាន – Ministry of Information").
+    """
+    if any(mark in line for mark in KHMER_STOPS):
+        return line
+    while (
+        (match := _TITLE_SUFFIX.match(line))
+        and _KHMER_CHAR.search(match["head"])
+        and (match["name"] in NAV_KHMER_SITE_NAMES or is_site_name(match["name"]))
+    ):
+        line = match["head"]
+    return line
+
+
+def strip_nav_line(line: str) -> str:
+    """One line without its website navigation / boilerplate; '' if nothing real is left (see NAV_* above)."""
+    if _BREADCRUMB.match(line):
+        glued = _GLUED_CONTENT.match(line)
+        if not glued:  # the section names run into the headline with nothing to tell them apart: drop the line
+            return ""
+        line = line[glued.end():]
+    if _NAV_LINE.search(line):
+        return ""
+    tail = _NAV_TAIL.search(line)
+    if tail:
+        line = line[: tail.start()]
+    for pattern in (_AD_CONTACT, _CREDIT):  # cut in place, the rest of the line stays
+        line = pattern.sub(" ", line)
+    return _INLINE_SPACE.sub(" ", line).strip()
+
+
+def strip_nav(text: str) -> tuple[str, int]:
+    """Strip navigation / boilerplate from every line; returns (text, lines changed or removed).
+
+    The site-name suffix is cut from the first line only: that is where a page title sits.
+    """
+    lines: list[str] = []
+    changed = 0
+    for i, line in enumerate(text.split("\n")):
+        stripped = strip_nav_line(line)
+        if i == 0:
+            stripped = cut_title_suffix(stripped)
+        changed += stripped != line
+        if stripped:
+            lines.append(stripped)
+    return "\n".join(lines), changed
+
+
 def drop_short_lines(text: str) -> tuple[str, int]:
     """Drop lines under MIN_LINE_CHARS that do not end a sentence; returns (text, lines dropped)."""
     lines = text.split("\n")
     kept = [line for line in lines if len(line) >= MIN_LINE_CHARS or ends_with_sentence_end(line)]
+    return "\n".join(kept), len(lines) - len(kept)
+
+
+def has_sentence_end(line: str) -> bool:
+    """True if the line holds a sentence-end mark (SENTENCE_ENDS) anywhere, not only at its end."""
+    return any(mark in line for mark in SENTENCE_ENDS)
+
+
+def drop_headline_lines(text: str) -> tuple[str, int]:
+    """Drop lines without any sentence-end mark (headlines, titles, labels, breadcrumbs); returns (text, lines dropped).
+
+    A paragraph with a mark in the middle stays even if it does not end with one: the trim to the last sentence
+    end handles the end of the text. clean_structure runs it after drop_short_lines, so the two counts stay apart
+    (fragments under MIN_LINE_CHARS there, longer headline lines here).
+    """
+    lines = text.split("\n")
+    kept = [line for line in lines if has_sentence_end(line)]
     return "\n".join(kept), len(lines) - len(kept)
 
 
@@ -213,16 +356,20 @@ class Structured:
     footer_cut: bool = False
     markers_stripped: int = 0  # lines that lost a list marker
     residue_dropped: int = 0  # site-title / URL / wikitext lines removed
+    nav_stripped: int = 0  # lines that lost website navigation / boilerplate (cut or dropped whole)
     lines_dropped: int = 0  # fragment lines removed
+    headline_lines_dropped: int = 0  # longer lines without any sentence-end mark removed
 
 
 def clean_structure(text: str) -> Structured:
-    """Footer, list-marker, residue-line and fragment-line rules for one already-normalized text."""
+    """Footer, list-marker, residue-line, navigation, fragment-line and headline-line rules for one already-normalized text."""
     text, footer_cut = cut_footer(text)
     text, markers = strip_list_markers(text)
     text, residue = drop_residue_lines(text)
+    text, nav = strip_nav(text)  # before the fragment rule: a cut line may be left short
     text, dropped = drop_short_lines(text)
-    return Structured(text, footer_cut, markers, residue, dropped)
+    text, headlines = drop_headline_lines(text)
+    return Structured(text, footer_cut, markers, residue, nav, dropped, headlines)
 
 
 def khmer_ratio(text: str) -> float:
@@ -403,8 +550,12 @@ def clean_and_filter(human: list[dict], ai: list[dict]) -> CleanRun:
         ev["markers_stripped"] += st.markers_stripped
         ev["texts_residue_dropped"] += st.residue_dropped > 0
         ev["residue_dropped"] += st.residue_dropped
+        ev["texts_nav_stripped"] += st.nav_stripped > 0
+        ev["nav_stripped"] += st.nav_stripped
         ev["texts_lines_dropped"] += st.lines_dropped > 0
         ev["lines_dropped"] += st.lines_dropped
+        ev["texts_headline_lines_dropped"] += st.headline_lines_dropped > 0
+        ev["headline_lines_dropped"] += st.headline_lines_dropped
         ev["end_trimmed"] += res.trimmed_end
         if res.reason is None and rec["prompt_type"] == PROMPT_WEB:
             if rec["human_id"] not in human_text:
@@ -647,8 +798,12 @@ STRUCTURE_EVENT_ROWS = (
     ("footer section cut", "footer_cut"),
     ("texts with fragment lines dropped", "texts_lines_dropped"),
     ("fragment lines dropped", "lines_dropped"),
+    ("texts with headline lines dropped", "texts_headline_lines_dropped"),
+    ("headline lines dropped (no ។៕?! on the line)", "headline_lines_dropped"),
     ("texts with residue lines dropped", "texts_residue_dropped"),
     ("residue lines dropped (| / URL / wikitext)", "residue_dropped"),
+    ("texts with navigation / boilerplate stripped", "texts_nav_stripped"),
+    ("lines with navigation / boilerplate stripped", "nav_stripped"),
     ("texts with list markers stripped", "texts_markers_stripped"),
     ("lines with list marker stripped", "markers_stripped"),
     ("texts trimmed to last sentence end", "end_trimmed"),

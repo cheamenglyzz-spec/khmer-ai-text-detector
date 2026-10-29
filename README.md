@@ -20,7 +20,7 @@ This README is also the project's living journal. It records the tools used and 
 | 4 | Train/val/test split, one generator held out | Script ready |
 | 5 | Baseline: TF-IDF + logistic regression | Script ready |
 | 6 | Fine-tune `xlm-roberta-base` | Ready; run once on partial data |
-| 7 | Evaluate (F1, ROC-AUC, per-generator, robustness) | Planned |
+| 7 | Evaluate (F1, ROC-AUC, per-generator, robustness) | Script ready |
 | 8 | Streamlit demo on Hugging Face Spaces | Planned |
 | 9 | Publish dataset, model and report | Planned |
 
@@ -104,7 +104,7 @@ Passages are kept at 300-2,500 characters.
 
 **Files.** `src/generate_ai.py`, `src/run_generation.ps1`.
 
-**Progress.** On 2026-10-29: 2,551 of 7,230 done (flash-lite 1,311, gpt-oss 562, gemma 415, qwen 263). gpt-oss adds about 110 texts a day, so about 12 more days are expected; its daily quota is the bottleneck.
+**Progress.** On 2026-10-29 19:00: 3,189 of 7,230 done (flash-lite 1,757, gpt-oss 678, gemma 455, qwen 299). If the runner runs non-stop, flash-lite finishes within hours, qwen (one request per 100 s) and gemma in about 2 days, and gpt-oss (about 150 texts a day) in about 8 days. Downtime of the PC adds to that directly.
 
 ### Step 3. Clean and length-match (script ready)
 
@@ -114,6 +114,8 @@ Passages are kept at 300-2,500 characters.
 
 - Strip invisible characters (for example the zero-width space U+200B, which gpt-oss adds).
 - Strip Wikipedia footer sections (See also, References, external links, notes, categories), list markers, title/URL/wikitext lines and short fragment lines.
+- Remove website navigation and boilerplate that mC4 news pages carry: breadcrumbs ("Home ព័ត៌មានជាតិ ...", "You are here:"), timestamps, "Previous / Next article", "Posted by", "Tags:", "Read more" teasers, © credits, an advertising-contact line, and site names at the end of the title line ("... - Amapapa News", "... - វិទ្យុវាយោ"; Khmer site names come from a fixed list).
+- Drop headline, title, label and breadcrumb lines: any line with no sentence-end mark (។ ៕ ? !) on it.
 - Remove spaces before Khmer punctuation marks (U+17D4-U+17D6).
 - Trim each text to its last sentence end.
 - Drop texts that are low in Khmer characters (under 70%), too short (under 300) or too long (over 2,500), AI texts that copy the hint, and duplicates.
@@ -121,7 +123,7 @@ Passages are kept at 300-2,500 characters.
 
 **Files.** `src/clean.py`; output `data/processed/clean.jsonl` and `reports/step3_clean_stats.json`.
 
-**Known leftover.** Some mC4 passages still contain inline site-navigation text (for example "- Kampuchea Thmey Home ...").
+**Known leftover.** About 20% of human texts still have a line that does not end in a sentence-end mark (a trailing fragment after the last "។"), against 0.2% of AI texts. Check the baseline's top n-grams for it after the full-data rerun.
 
 ### Step 4. Split (script ready)
 
@@ -160,9 +162,20 @@ Passages are kept at 300-2,500 characters.
 
 **Note.** If the notebook is used with `CODE_SOURCE = "github"` while the repo is private, set `USE_TOKEN = True` and add a `GITHUB_TOKEN` secret.
 
-### Step 7. Evaluate (planned)
+### Step 7. Evaluate (script ready)
 
-Report F1 and ROC-AUC, results per generator, and robustness to paraphrasing and truncation. ROC-AUC measures how well the model ranks AI texts above human ones, regardless of the threshold; F1 balances precision and recall. The truncation question from step 6 (see Results) will be checked here.
+**Purpose.** Find out where the detector works and where it fails, and whether it survives simple tricks. ROC-AUC measures how well the model ranks AI texts above human ones, regardless of the threshold; F1 balances precision and recall.
+
+**How it works.**
+
+- `src/evaluate.py` scores val, test and test_ood with the baseline (locally) or a saved XLM-R model (on Colab), or reads an existing predictions file. It reports metrics overall and by generator, source, prompt type, length bin and (for XLM-R) whether the text was cut at 512 tokens, and lists the misclassified texts, most confident first.
+- **Truncation test:** every test text is cut to its first 300, 600 and 1,000 characters (back to a sentence end) and scored again.
+- **Paraphrase test:** `src/paraphrase.py` asks Gemini to reword about 150 AI and 150 human test texts. The AI rewrites check whether rewording hides AI text; the human rewrites check whether an LLM-polished human text gets called AI.
+- `notebooks/02_finetune_xlmr.ipynb` has an optional last section that runs step 7 on the freshly trained model.
+
+**Files.** `src/evaluate.py`, `src/paraphrase.py`; output `reports/step7_eval_<model>.json` and `data/eval/paraphrased.jsonl`.
+
+**First look (partial data, baseline).** F1 stays 0.97 at 1,000 characters, drops to 0.91 at 600 and 0.67 at 300, while ROC-AUC at 300 is still 0.94: short texts mostly push the scores below the 0.5 threshold rather than lose the signal. XLM-R's errors are confident and sit in short and mid-length human texts; texts cut at 512 tokens were all classified correctly on test.
 
 ### Step 8. Streamlit demo (planned)
 
@@ -212,7 +225,10 @@ Observations:
 | 2026-10-26 | Unzipped `colab_bundle/` folder held the dataset splits and was not covered by `.gitignore` | Missing ignore rule | Added to `.gitignore`. |
 | 2026-10-25 to 2026-10-26 | Generation silently stopped (about 23 hours lost), from 2026-10-25 22:18 | Likely the PC restarted or the window was closed; output was intact | Restarted at 2026-10-26 21:46; it resumed from the checkpoint. |
 | Windows | Khmer text could be corrupted in files and logs | PowerShell 5.1 redirection re-encodes UTF-8, and Python on Windows defaults to cp1252 | `run_generation.ps1` pipes through cmd to keep text intact; files are opened with `encoding="utf-8"`. |
-| 2026-10-26 | XLM-R at 512 tokens truncates about half the texts | Khmer is token-heavy | Noted; to be checked in step 7. |
+| 2026-10-26 | XLM-R at 512 tokens truncates about half the texts | Khmer is token-heavy | Checked with the step 7 script on the partial predictions: truncated texts were not where the errors were. Recheck on full data. |
+| 2026-10-29 | mC4 news texts still carried website navigation (breadcrumbs, "Previous article", timestamps, "Posted by") in about 14% of texts, and site names after the headline ("- Amapapa News") in about 13%; AI texts never | Web pages scraped with their menus and titles | Nav, boilerplate and site-name rules in `clean.py` for both classes; about 1,100 mC4 texts changed. |
+| 2026-10-29 | About 47% of human texts had a headline-like line with no sentence end, against 0.3% of AI texts | News headlines, Wikipedia labels and breadcrumbs; AI writes only prose | Lines with no sentence-end mark are dropped in both classes. It also drops some unpunctuated human prose, so the length-matched set shrinks by about 10% (partial data: 3,009 to 2,701 per class). |
+| 2026-10-29 | The paraphrase test could not use `gemini-3.1-flash-lite` | Its free tier allows 500 requests a day and the generation run had used them | Run `paraphrase.py` after generation finishes and the quota resets. |
 
 ### Non-technical and process
 
@@ -223,6 +239,7 @@ Observations:
 | 2026-10-25 | The assistant could not drive Colab | Claude in Chrome is not installed, and Google sign-in has to be done by the owner | `colab_bundle.zip` was dragged into Drive and the Colab run was done by hand. |
 | Steps 3-6 | Results are partial | Steps 3-6 were built and tested on partial data while the long generation runs | Work continues in parallel; all reports in `reports/` must be rerun on full data. |
 | Step 2 | The assistant could not launch the generation runner | Launching it is not allowed from the assistant's environment | The runner is started by hand in a PowerShell window. |
+| 2026-10-27 to 2026-10-29 | The runner worked only about 22 of the 69 hours after the 2026-10-26 restart; about 42 hours were lost from 2026-10-27 evening to 2026-10-29 14:43 | The PC slept or was off, or the window was closed; the run does not restart by itself | Keep the PC awake while plugged in and the runner window open; restart it after any reboot. |
 
 ## How to run
 
@@ -258,6 +275,14 @@ python src/make_colab_bundle.py
 ```
 
 Then drag `colab_bundle.zip` to the root of My Drive, open `02_finetune_xlmr.ipynb` in Colab, select the T4 GPU and choose Run all. Outputs land in Drive under `khmer-ai-text-detector/`.
+
+Step 7 (run `paraphrase.py` before making the Colab bundle, so the paraphrase test runs there too):
+
+```powershell
+python src/paraphrase.py
+python src/evaluate.py --model baseline
+python src/evaluate.py --predictions reports/step6_xlmr_predictions.jsonl --tokenizer xlm-roberta-base
+```
 
 ## Repository layout
 
@@ -296,4 +321,4 @@ Append new entries at the bottom.
 - 2026-10-24/25: First full generation run killed by a session restart after 564 texts. `run_generation.ps1` loop added.
 - 2026-10-25: Cleaning asymmetry and the space-before-"។" shortcut found and fixed. Generation plan frozen. Steps 3-5 scripts ready. Generation stopped silently at 22:18.
 - 2026-10-26: First step 6 run on a Colab T4 with partial data (150 s). Lost about 23 hours of generation; restarted at 21:46. 1,478 of 7,230 AI texts done.
-- 2026-10-29: README rewritten as a project journal. Generation at 2,551 of 7,230 AI texts.
+- 2026-10-29: README rewritten as a project journal. Generation at 3,189 of 7,230 AI texts. Found that PC downtime, not quotas, was the main slowdown since 2026-10-26. Step 3 now strips website navigation, site names and headline lines (three new shortcuts found). Step 7 evaluation and paraphrase scripts built and tested on partial data.
