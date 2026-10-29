@@ -1,0 +1,12 @@
+# What a Hugging Face Space needs to run app/app.py with the baseline model.
+streamlit==1.66.0
+# Must match the version that pickled models/baseline_tfidf_lr.joblib (scikit-learn 1.9.1, Python 3.12 or newer)
+scikit-learn==1.9.1
+joblib>=1.4
+numpy>=2.0
+# src/clean.py (reused to clean pasted text) imports pandas
+pandas>=2.2
+
+# Later, for the XLM-R model (KHMER_DETECTOR_MODEL=xlmr):
+# transformers>=4.46
+# torch>=2.4

@@ -21,7 +21,7 @@ This README is also the project's living journal. It records the tools used and 
 | 5 | Baseline: TF-IDF + logistic regression | Script ready |
 | 6 | Fine-tune `xlm-roberta-base` | Ready; run once on partial data |
 | 7 | Evaluate (F1, ROC-AUC, per-generator, robustness) | Script ready |
-| 8 | Streamlit demo on Hugging Face Spaces | Planned |
+| 8 | Streamlit demo on Hugging Face Spaces | Built, runs locally with the baseline; not deployed |
 | 9 | Publish dataset, model and report | Planned |
 
 "Script ready" means the script is written and tested. Its output so far comes from partial data and must be rerun once generation finishes.
@@ -177,9 +177,23 @@ Passages are kept at 300-2,500 characters.
 
 **First look (partial data, baseline).** F1 stays 0.97 at 1,000 characters, drops to 0.91 at 600 and 0.67 at 300, while ROC-AUC at 300 is still 0.94: short texts mostly push the scores below the 0.5 threshold rather than lose the signal. XLM-R's errors are confident and sit in short and mid-length human texts; texts cut at 512 tokens were all classified correctly on test.
 
-### Step 8. Streamlit demo (planned)
+### Step 8. Streamlit demo (built, runs locally)
 
-A small web app on Hugging Face Spaces where a user pastes Khmer text and sees the prediction. Code goes in `app/`.
+**Purpose.** Let anyone try the detector: paste Khmer text, get a verdict.
+
+**How it works.**
+
+- The pasted text gets the same step-3 cleaning as the training data, then the model scores it.
+- The page shows "Likely AI-generated" or "Likely human-written" (threshold 50%), the AI probability, and how strong the signal is.
+- For the baseline, a "Why this score?" panel lists the character sequences that pushed the score toward AI or toward human.
+- Warnings appear for text under 300 characters, text with under 70% Khmer, and text over 2,500 characters.
+- Two example buttons load a Wikipedia passage and the AI text written for the same topic.
+- An "About this demo" section says what the model was trained on, where it fails, and that it must not be used to accuse anyone.
+- The model is chosen with `KHMER_DETECTOR_MODEL` (`baseline` now; `xlmr` is prepared but not built yet).
+
+**Files.** `app/app.py` (page), `app/detector.py` (logic), `app/examples.json`, `app/requirements.txt`, `app/README.md` (Hugging Face Spaces header); tests in `tests/test_detector.py`.
+
+**Still to do.** Deploy to Hugging Face Spaces (copy `src/clean.py` and the model in), retrain on full data, add the XLM-R backend, pick a license, and have a Khmer reader check the Khmer heading.
 
 ### Step 9. Publish (planned)
 
@@ -228,6 +242,7 @@ Observations:
 | 2026-10-26 | XLM-R at 512 tokens truncates about half the texts | Khmer is token-heavy | Checked with the step 7 script on the partial predictions: truncated texts were not where the errors were. Recheck on full data. |
 | 2026-10-29 | mC4 news texts still carried website navigation (breadcrumbs, "Previous article", timestamps, "Posted by") in about 14% of texts, and site names after the headline ("- Amapapa News") in about 13%; AI texts never | Web pages scraped with their menus and titles | Nav, boilerplate and site-name rules in `clean.py` for both classes; about 1,100 mC4 texts changed. |
 | 2026-10-29 | About 47% of human texts had a headline-like line with no sentence end, against 0.3% of AI texts | News headlines, Wikipedia labels and breadcrumbs; AI writes only prose | Lines with no sentence-end mark are dropped in both classes. It also drops some unpunctuated human prose, so the length-matched set shrinks by about 10% (partial data: 3,009 to 2,701 per class). |
+| 2026-10-29 | The demo's explanation panel shows spaces around brackets ("␣(", ")␣") among the top "human" features | Human writers put spaces around brackets more often than the AI models; this may be a spacing habit rather than writing style | To check with the baseline's top n-grams after the full-data rerun. |
 | 2026-10-29 | The paraphrase test could not use `gemini-3.1-flash-lite` | Its free tier allows 500 requests a day and the generation run had used them | Run `paraphrase.py` after generation finishes and the quota resets. |
 
 ### Non-technical and process
@@ -276,6 +291,12 @@ python src/make_colab_bundle.py
 
 Then drag `colab_bundle.zip` to the root of My Drive, open `02_finetune_xlmr.ipynb` in Colab, select the T4 GPU and choose Run all. Outputs land in Drive under `khmer-ai-text-detector/`.
 
+Step 8 demo (opens in the browser at http://localhost:8501):
+
+```powershell
+.venv\Scripts\python.exe -m streamlit run app/app.py
+```
+
 Step 7 (run `paraphrase.py` before making the Colab bundle, so the paraphrase test runs there too):
 
 ```powershell
@@ -321,4 +342,4 @@ Append new entries at the bottom.
 - 2026-10-24/25: First full generation run killed by a session restart after 564 texts. `run_generation.ps1` loop added.
 - 2026-10-25: Cleaning asymmetry and the space-before-"។" shortcut found and fixed. Generation plan frozen. Steps 3-5 scripts ready. Generation stopped silently at 22:18.
 - 2026-10-26: First step 6 run on a Colab T4 with partial data (150 s). Lost about 23 hours of generation; restarted at 21:46. 1,478 of 7,230 AI texts done.
-- 2026-10-29: README rewritten as a project journal. Generation at 3,189 of 7,230 AI texts. Found that PC downtime, not quotas, was the main slowdown since 2026-10-26. Step 3 now strips website navigation, site names and headline lines (three new shortcuts found). Step 7 evaluation and paraphrase scripts built and tested on partial data.
+- 2026-10-29: README rewritten as a project journal. Generation at 3,189 of 7,230 AI texts. Found that PC downtime, not quotas, was the main slowdown since 2026-10-26. Step 3 now strips website navigation, site names and headline lines (three new shortcuts found). Step 7 evaluation and paraphrase scripts built and tested on partial data. Step 8 Streamlit demo built and checked in a browser (desktop and phone width).
