@@ -32,12 +32,16 @@ Portfolio project: a binary classifier that detects whether Khmer text is human-
   - Free-tier limits: gpt-oss-120b 200k tokens/day (~150 texts/day, the bottleneck); Groq 1,000 requests/day per model; qwen ~1,000 output tokens/min (100 s interval); gemma is slow (~50 s/request) and often returns 500s (retried on rerun).
   - First smoke-test output was moved to `data/generated/old_smoke_test/`.
 - Step 3 script READY: `src/clean.py` (tests in `tests/`). Same rules for both classes: strip invisible chars (gpt-oss adds U+200B), Wikipedia footers, title/URL/wikitext and fragment lines, trim to last sentence end, filter, dedup, length-match per 200-char bin.
-  - Known leftover: inline site-nav text in some mc4 passages (e.g. "- Kampuchea Thmey Home ...").
+  - Also strips mC4 navigation/boilerplate, title site names (fixed Khmer list `NAV_KHMER_SITE_NAMES`) and every line with no sentence-end mark (headlines); these were human-only shortcuts. On partial data it cuts the length-matched set ~10%.
+  - Known leftover: ~20% of human texts have a line not ending in a stop (trailing fragment) vs 0.2% AI; check baseline top n-grams after the full rerun.
 - Steps 4–5 scripts READY: `src/split.py`, `src/baseline.py`. Their reports in `reports/` are from partial data; rerun steps 3–5 once generation is done.
-- Step 6 script READY, not yet run on a GPU: `src/finetune.py` (logic, CPU smoke-tested) + `notebooks/02_finetune_xlmr.ipynb` (Colab driver).
-  - Colab reads the splits from Drive `MyDrive/khmer-ai-text-detector/splits/` and writes the model and reports back to Drive.
-  - The GitHub repo is private: the notebook clones with a `GITHUB_TOKEN` Colab secret.
-  - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); check this in step 7.
+- Step 6 READY and run once on a Colab T4 (2026-10-26, partial data: 1,404 train rows; 150 s): `src/finetune.py` + `notebooks/02_finetune_xlmr.ipynb`.
+  - Results in `reports/step6_xlmr_*`: F1 val 0.951 / test 0.978 / test_ood 0.949, a bit under the TF-IDF baseline; all errors but one are humans called AI. Rerun on the full data.
+  - Colab route: `python src/make_colab_bundle.py` makes `colab_bundle.zip` (code + splits, gitignored); drag it into the root of My Drive, open `Colab Notebooks/02_finetune_xlmr.ipynb` in Drive, T4, Run all. Outputs go to Drive `khmer-ai-text-detector/`.
+  - The GitHub repo is still private (making it public did not take effect), so the notebook's `CODE_SOURCE = "github"` path needs `USE_TOKEN = True` + a `GITHUB_TOKEN` secret.
+  - At 512 tokens about half the texts are truncated, humans more often than AI (~60% vs ~50% in train); on the partial test set the truncated texts had no errors.
+- Step 7 READY: `src/evaluate.py` (baseline locally, `--model xlmr` on Colab via the optional last section of notebook 02, or `--predictions` file mode) and `src/paraphrase.py` (Gemini paraphrases of ~150 AI + 150 human test rows -> `data/eval/paraphrased.jsonl`). Run paraphrase.py after generation finishes: gemini-3.1-flash-lite allows 500 requests/day and the generation run uses them; make the Colab bundle after it so Colab gets the file.
+- Step 8 BUILT (local, not deployed): `app/app.py` + `app/detector.py`, baseline backend; run `.venv\Scripts\python.exe -m streamlit run app/app.py`. After the full rerun: re-pick `app/examples.json` (a test asserts their labels), flip `TRAINED_ON_PARTIAL_DATA` in app.py, add the XLM-R backend. Open: Khmer heading wording unchecked.
 
 ## Layout
 ```
@@ -50,6 +54,7 @@ reports/         figures, metrics, final report
 ```
 
 ## Conventions
+- Licenses: code MIT (`LICENSE`), dataset CC BY-SA 4.0 (Wikipedia share-alike; mC4 ODC-BY attribution; API terms apply to AI texts).
 - Python 3.10+, dependencies in `requirements.txt`.
 - Each record: `text, label, source, generator, url, date, length`.
 - Labels are integers: `0` = human, `1` = ai.
@@ -58,3 +63,4 @@ reports/         figures, metrics, final report
 - Fixed random seed (42) for all splits and sampling.
 - Respect API rate limits: retry with backoff, resume from checkpoints.
 - After each step, report the counts, the length distribution and a few random samples.
+- `README.md` is the project's living journal: after each step, result or issue (technical or non-technical), update its step status, results, issues tables and project journal, and bump "Last updated".

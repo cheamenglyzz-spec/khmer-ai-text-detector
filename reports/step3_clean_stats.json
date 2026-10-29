@@ -1,0 +1,464 @@
+{
+  "config": {
+    "seed": 42,
+    "min_chars": 300,
+    "max_chars": 2500,
+    "min_khmer_ratio": 0.7,
+    "bin_width": 200,
+    "copy_check_chars": 300,
+    "copy_min_span": 60,
+    "near_dup_chars": 150,
+    "min_line_chars": 40,
+    "footer_markers": [
+      "មើលផងដែរ",
+      "សូមមើលផងដែរ",
+      "See also",
+      "ឯកសារយោង",
+      "ឯកសារពិគ្រោះ",
+      "គន្ថនិទ្ទេស",
+      "អានបន្ថែម",
+      "ការអានបន្ថែម",
+      "តំណភ្ជាប់",
+      "តំនភ្ជាប់",
+      "តំណរភ្ជាប់",
+      "តំណខាងក្រៅ",
+      "តំណក្រៅ",
+      "តំនក្រៅ",
+      "កំណត់សម្គាល់",
+      "កំណត់សំគាល់",
+      "កំណត់ចំណាំ",
+      "Notes",
+      "ប្រភពឯកសារ",
+      "ចំណាត់ថ្នាក់ក្រុម",
+      "Category:"
+    ],
+    "length_match": true,
+    "human_file": "C:\\Users\\Asus\\Documents\\claude\\khmer-ai-text-detector\\data\\human.csv",
+    "ai_files": [
+      "C:\\Users\\Asus\\Documents\\claude\\khmer-ai-text-detector\\data\\generated\\ai_raw.jsonl"
+    ]
+  },
+  "input": {
+    "human": 7964,
+    "ai": 920,
+    "ai_by_generator": {
+      "gemini-3.1-flash-lite": 616,
+      "gemma-4-31b-it": 32,
+      "openai/gpt-oss-120b": 243,
+      "qwen/qwen3.8-27b": 29
+    },
+    "ai_by_prompt_type": {
+      "web_hint": 459,
+      "wiki_title": 461
+    },
+    "ai_by_finish_reason": {
+      "length": 3,
+      "stop": 917
+    }
+  },
+  "trimmed": {
+    "ai_truncated_to_sentence_end": 2,
+    "ai_long_to_sentence_end": 241
+  },
+  "structure_cleaning": {
+    "events": {
+      "human": {
+        "texts": 7964,
+        "footer_cut": 423,
+        "texts_markers_stripped": 296,
+        "markers_stripped": 1745,
+        "texts_residue_dropped": 883,
+        "residue_dropped": 1189,
+        "texts_lines_dropped": 2852,
+        "lines_dropped": 20141,
+        "end_trimmed": 2114
+      },
+      "ai": {
+        "texts": 920,
+        "footer_cut": 0,
+        "texts_markers_stripped": 1,
+        "markers_stripped": 1,
+        "texts_residue_dropped": 0,
+        "residue_dropped": 0,
+        "texts_lines_dropped": 0,
+        "lines_dropped": 0,
+        "end_trimmed": 3
+      }
+    },
+    "before_all_input": {
+      "ai": {
+        "n": 920,
+        "ends_with_sentence_end": 0.996,
+        "short_line_share": 0.0,
+        "mean_lines": 3.59
+      },
+      "human": {
+        "n": 7964,
+        "ends_with_sentence_end": 0.542,
+        "short_line_share": 0.342,
+        "mean_lines": 8.61
+      }
+    },
+    "after_kept_rows": {
+      "ai": {
+        "n": 910,
+        "ends_with_sentence_end": 1.0,
+        "short_line_share": 0.0,
+        "mean_lines": 3.42
+      },
+      "human": {
+        "n": 7220,
+        "ends_with_sentence_end": 1.0,
+        "short_line_share": 0.025,
+        "mean_lines": 5.49
+      }
+    }
+  },
+  "drops": {
+    "truncated_no_sentence_end": {
+      "human": 405,
+      "ai": 1,
+      "total": 406
+    },
+    "low_khmer_ratio": {
+      "human": 35,
+      "ai": 0,
+      "total": 35
+    },
+    "too_short": {
+      "human": 296,
+      "ai": 4,
+      "total": 300
+    },
+    "too_long": {
+      "human": 0,
+      "ai": 0,
+      "total": 0
+    },
+    "copied_hint": {
+      "human": 0,
+      "ai": 5,
+      "total": 5
+    },
+    "duplicate_id": {
+      "human": 0,
+      "ai": 0,
+      "total": 0
+    },
+    "duplicate": {
+      "human": 2,
+      "ai": 0,
+      "total": 2
+    },
+    "near_duplicate": {
+      "human": 6,
+      "ai": 0,
+      "total": 6
+    }
+  },
+  "after_cleaning": {
+    "n": 8130,
+    "by_label": {
+      "ai": 910,
+      "human": 7220
+    },
+    "by_source": {
+      "mc4_web": 4308,
+      "wikipedia": 3822
+    },
+    "by_label_source": {
+      "ai": {
+        "mc4_web": 453,
+        "wikipedia": 457
+      },
+      "human": {
+        "mc4_web": 3855,
+        "wikipedia": 3365
+      }
+    },
+    "by_generator": {
+      "gemini-3.1-flash-lite": 608,
+      "gemma-4-31b-it": 32,
+      "human": 7220,
+      "openai/gpt-oss-120b": 242,
+      "qwen/qwen3.8-27b": 28
+    },
+    "length_by_label": {
+      "ai": {
+        "n": 910,
+        "min": 302,
+        "median": 1854.0,
+        "mean": 1705.1,
+        "max": 2500
+      },
+      "human": {
+        "n": 7220,
+        "min": 300,
+        "median": 1484.0,
+        "mean": 1467.1,
+        "max": 2500
+      }
+    },
+    "length_by_generator": {
+      "gemini-3.1-flash-lite": {
+        "n": 608,
+        "min": 302,
+        "median": 1986.5,
+        "mean": 1774.0,
+        "max": 2500
+      },
+      "gemma-4-31b-it": {
+        "n": 32,
+        "min": 329,
+        "median": 1712.0,
+        "mean": 1564.6,
+        "max": 2469
+      },
+      "human": {
+        "n": 7220,
+        "min": 300,
+        "median": 1484.0,
+        "mean": 1467.1,
+        "max": 2500
+      },
+      "openai/gpt-oss-120b": {
+        "n": 242,
+        "min": 325,
+        "median": 1707.5,
+        "mean": 1554.5,
+        "max": 2490
+      },
+      "qwen/qwen3.8-27b": {
+        "n": 28,
+        "min": 357,
+        "median": 1719.5,
+        "mean": 1672.1,
+        "max": 2474
+      }
+    },
+    "latin_words_per_1000_chars": {
+      "by_label": {
+        "ai": 1.001,
+        "human": 3.808
+      },
+      "by_generator": {
+        "gemini-3.1-flash-lite": 0.21,
+        "gemma-4-31b-it": 1.099,
+        "human": 3.808,
+        "openai/gpt-oss-120b": 3.323,
+        "qwen/qwen3.8-27b": 0.47
+      }
+    },
+    "structure": {
+      "ai": {
+        "n": 910,
+        "ends_with_sentence_end": 1.0,
+        "short_line_share": 0.0,
+        "mean_lines": 3.42
+      },
+      "human": {
+        "n": 7220,
+        "ends_with_sentence_end": 1.0,
+        "short_line_share": 0.025,
+        "mean_lines": 5.49
+      }
+    }
+  },
+  "length_match_bins": [
+    {
+      "bin": "300-499",
+      "before_human": 683,
+      "before_ai": 42,
+      "after_human": 42,
+      "after_ai": 42
+    },
+    {
+      "bin": "500-699",
+      "before_human": 624,
+      "before_ai": 71,
+      "after_human": 71,
+      "after_ai": 71
+    },
+    {
+      "bin": "700-899",
+      "before_human": 584,
+      "before_ai": 55,
+      "after_human": 55,
+      "after_ai": 55
+    },
+    {
+      "bin": "900-1099",
+      "before_human": 638,
+      "before_ai": 52,
+      "after_human": 52,
+      "after_ai": 52
+    },
+    {
+      "bin": "1100-1299",
+      "before_human": 590,
+      "before_ai": 53,
+      "after_human": 53,
+      "after_ai": 53
+    },
+    {
+      "bin": "1300-1499",
+      "before_human": 541,
+      "before_ai": 48,
+      "after_human": 48,
+      "after_ai": 48
+    },
+    {
+      "bin": "1500-1699",
+      "before_human": 507,
+      "before_ai": 72,
+      "after_human": 72,
+      "after_ai": 72
+    },
+    {
+      "bin": "1700-1899",
+      "before_human": 544,
+      "before_ai": 87,
+      "after_human": 87,
+      "after_ai": 87
+    },
+    {
+      "bin": "1900-2099",
+      "before_human": 628,
+      "before_ai": 79,
+      "after_human": 79,
+      "after_ai": 79
+    },
+    {
+      "bin": "2100-2299",
+      "before_human": 928,
+      "before_ai": 64,
+      "after_human": 64,
+      "after_ai": 64
+    },
+    {
+      "bin": "2300-2500",
+      "before_human": 953,
+      "before_ai": 287,
+      "after_human": 287,
+      "after_ai": 287
+    }
+  ],
+  "final": {
+    "n": 1820,
+    "by_label": {
+      "ai": 910,
+      "human": 910
+    },
+    "by_source": {
+      "mc4_web": 940,
+      "wikipedia": 880
+    },
+    "by_label_source": {
+      "ai": {
+        "mc4_web": 453,
+        "wikipedia": 457
+      },
+      "human": {
+        "mc4_web": 487,
+        "wikipedia": 423
+      }
+    },
+    "by_generator": {
+      "gemini-3.1-flash-lite": 608,
+      "gemma-4-31b-it": 32,
+      "human": 910,
+      "openai/gpt-oss-120b": 242,
+      "qwen/qwen3.8-27b": 28
+    },
+    "length_by_label": {
+      "ai": {
+        "n": 910,
+        "min": 302,
+        "median": 1854.0,
+        "mean": 1705.1,
+        "max": 2500
+      },
+      "human": {
+        "n": 910,
+        "min": 305,
+        "median": 1844.0,
+        "mean": 1696.0,
+        "max": 2498
+      }
+    },
+    "length_by_generator": {
+      "gemini-3.1-flash-lite": {
+        "n": 608,
+        "min": 302,
+        "median": 1986.5,
+        "mean": 1774.0,
+        "max": 2500
+      },
+      "gemma-4-31b-it": {
+        "n": 32,
+        "min": 329,
+        "median": 1712.0,
+        "mean": 1564.6,
+        "max": 2469
+      },
+      "human": {
+        "n": 910,
+        "min": 305,
+        "median": 1844.0,
+        "mean": 1696.0,
+        "max": 2498
+      },
+      "openai/gpt-oss-120b": {
+        "n": 242,
+        "min": 325,
+        "median": 1707.5,
+        "mean": 1554.5,
+        "max": 2490
+      },
+      "qwen/qwen3.8-27b": {
+        "n": 28,
+        "min": 357,
+        "median": 1719.5,
+        "mean": 1672.1,
+        "max": 2474
+      }
+    },
+    "latin_words_per_1000_chars": {
+      "by_label": {
+        "ai": 1.001,
+        "human": 3.426
+      },
+      "by_generator": {
+        "gemini-3.1-flash-lite": 0.21,
+        "gemma-4-31b-it": 1.099,
+        "human": 3.426,
+        "openai/gpt-oss-120b": 3.323,
+        "qwen/qwen3.8-27b": 0.47
+      }
+    },
+    "structure": {
+      "ai": {
+        "n": 910,
+        "ends_with_sentence_end": 1.0,
+        "short_line_share": 0.0,
+        "mean_lines": 3.42
+      },
+      "human": {
+        "n": 910,
+        "ends_with_sentence_end": 1.0,
+        "short_line_share": 0.025,
+        "mean_lines": 6.24
+      }
+    }
+  },
+  "ks_length": {
+    "before_matching": 0.1889561961584122,
+    "after_matching": 0.07582417582417578
+  },
+  "topic_pairs": {
+    "ai_rows_before_matching": 910,
+    "pairs_before_matching": 907,
+    "ai_rows_final": 910,
+    "pairs_final": 685
+  }
+}

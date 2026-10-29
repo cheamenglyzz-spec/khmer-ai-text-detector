@@ -1,0 +1,322 @@
+{
+  "config": {
+    "seed": 42,
+    "holdout": "qwen/qwen3.8-27b",
+    "fractions": {
+      "train": 0.8,
+      "val": 0.1,
+      "test": 0.1
+    },
+    "input": "C:\\Users\\Asus\\Documents\\claude\\khmer-ai-text-detector\\data\\processed\\clean.jsonl"
+  },
+  "input_rows": 1820,
+  "splits": {
+    "train": {
+      "n": 1404,
+      "by_label": {
+        "ai": 701,
+        "human": 703
+      },
+      "by_generator": {
+        "gemini-3.1-flash-lite": 483,
+        "gemma-4-31b-it": 26,
+        "human": 703,
+        "openai/gpt-oss-120b": 192
+      },
+      "by_source": {
+        "mc4_web": 731,
+        "wikipedia": 673
+      },
+      "length_by_label": {
+        "ai": {
+          "n": 701,
+          "min": 323,
+          "median": 1861,
+          "mean": 1716.4,
+          "max": 2500
+        },
+        "human": {
+          "n": 703,
+          "min": 311,
+          "median": 1888,
+          "mean": 1709.9,
+          "max": 2498
+        }
+      },
+      "ks_length_human_vs_ai": 0.09306964446239163
+    },
+    "val": {
+      "n": 175,
+      "by_label": {
+        "ai": 88,
+        "human": 87
+      },
+      "by_generator": {
+        "gemini-3.1-flash-lite": 61,
+        "gemma-4-31b-it": 3,
+        "human": 87,
+        "openai/gpt-oss-120b": 24
+      },
+      "by_source": {
+        "mc4_web": 89,
+        "wikipedia": 86
+      },
+      "length_by_label": {
+        "ai": {
+          "n": 88,
+          "min": 314,
+          "median": 1872.0,
+          "mean": 1698.6,
+          "max": 2485
+        },
+        "human": {
+          "n": 87,
+          "min": 387,
+          "median": 1859,
+          "mean": 1710.3,
+          "max": 2487
+        }
+      },
+      "ks_length_human_vs_ai": 0.07301462904911182
+    },
+    "test": {
+      "n": 175,
+      "by_label": {
+        "ai": 88,
+        "human": 87
+      },
+      "by_generator": {
+        "gemini-3.1-flash-lite": 61,
+        "gemma-4-31b-it": 3,
+        "human": 87,
+        "openai/gpt-oss-120b": 24
+      },
+      "by_source": {
+        "mc4_web": 89,
+        "wikipedia": 86
+      },
+      "length_by_label": {
+        "ai": {
+          "n": 88,
+          "min": 302,
+          "median": 1736.5,
+          "mean": 1644.9,
+          "max": 2496
+        },
+        "human": {
+          "n": 87,
+          "min": 329,
+          "median": 1708,
+          "mean": 1635.6,
+          "max": 2492
+        }
+      },
+      "ks_length_human_vs_ai": 0.08699059561128519
+    },
+    "test_ood": {
+      "n": 56,
+      "by_label": {
+        "ai": 28,
+        "human": 28
+      },
+      "by_generator": {
+        "human": 28,
+        "qwen/qwen3.8-27b": 28
+      },
+      "by_source": {
+        "mc4_web": 27,
+        "wikipedia": 29
+      },
+      "length_by_label": {
+        "ai": {
+          "n": 28,
+          "min": 357,
+          "median": 1719.5,
+          "mean": 1672.1,
+          "max": 2474
+        },
+        "human": {
+          "n": 28,
+          "min": 305,
+          "median": 1806.5,
+          "mean": 1646.4,
+          "max": 2445
+        }
+      },
+      "ks_length_human_vs_ai": 0.1428571428571429
+    }
+  },
+  "test_ood": {
+    "holdout": "qwen/qwen3.8-27b",
+    "ai_rows": 28,
+    "ai_rows_kept": 28,
+    "human_rows": 28,
+    "pairs": 14,
+    "bins": [
+      {
+        "bin": "300-499",
+        "ai": 2,
+        "linked_available": 1,
+        "linked_kept": 1,
+        "linked_quarantined": 0,
+        "from_unpaired": 0,
+        "from_paired": 1,
+        "humans": 2,
+        "ai_kept": 2,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "500-699",
+        "ai": 1,
+        "linked_available": 4,
+        "linked_kept": 1,
+        "linked_quarantined": 3,
+        "from_unpaired": 0,
+        "from_paired": 0,
+        "humans": 1,
+        "ai_kept": 1,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "700-899",
+        "ai": 3,
+        "linked_available": 2,
+        "linked_kept": 2,
+        "linked_quarantined": 0,
+        "from_unpaired": 0,
+        "from_paired": 1,
+        "humans": 3,
+        "ai_kept": 3,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "900-1099",
+        "ai": 1,
+        "linked_available": 2,
+        "linked_kept": 1,
+        "linked_quarantined": 1,
+        "from_unpaired": 0,
+        "from_paired": 0,
+        "humans": 1,
+        "ai_kept": 1,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "1100-1299",
+        "ai": 2,
+        "linked_available": 0,
+        "linked_kept": 0,
+        "linked_quarantined": 0,
+        "from_unpaired": 0,
+        "from_paired": 2,
+        "humans": 2,
+        "ai_kept": 2,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "1300-1499",
+        "ai": 1,
+        "linked_available": 2,
+        "linked_kept": 1,
+        "linked_quarantined": 1,
+        "from_unpaired": 0,
+        "from_paired": 0,
+        "humans": 1,
+        "ai_kept": 1,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "1500-1699",
+        "ai": 3,
+        "linked_available": 2,
+        "linked_kept": 2,
+        "linked_quarantined": 0,
+        "from_unpaired": 1,
+        "from_paired": 0,
+        "humans": 3,
+        "ai_kept": 3,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "1700-1899",
+        "ai": 3,
+        "linked_available": 1,
+        "linked_kept": 1,
+        "linked_quarantined": 0,
+        "from_unpaired": 2,
+        "from_paired": 0,
+        "humans": 3,
+        "ai_kept": 3,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "1900-2099",
+        "ai": 2,
+        "linked_available": 2,
+        "linked_kept": 2,
+        "linked_quarantined": 0,
+        "from_unpaired": 0,
+        "from_paired": 0,
+        "humans": 2,
+        "ai_kept": 2,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "2100-2299",
+        "ai": 2,
+        "linked_available": 1,
+        "linked_kept": 1,
+        "linked_quarantined": 0,
+        "from_unpaired": 0,
+        "from_paired": 1,
+        "humans": 2,
+        "ai_kept": 2,
+        "ai_quarantined": 0
+      },
+      {
+        "bin": "2300-2500",
+        "ai": 8,
+        "linked_available": 2,
+        "linked_kept": 2,
+        "linked_quarantined": 0,
+        "from_unpaired": 6,
+        "from_paired": 0,
+        "humans": 8,
+        "ai_kept": 8,
+        "ai_quarantined": 0
+      }
+    ],
+    "humans_from": {
+      "linked": 14,
+      "unpaired": 9,
+      "paired": 5
+    },
+    "quarantined": {
+      "other_generator_ai": 0,
+      "linked_humans": 5,
+      "partner_ai": 5,
+      "surplus_ai": 0
+    }
+  },
+  "quarantined": {
+    "rows": 10,
+    "by_reason": {
+      "other_generator_ai": 0,
+      "linked_humans": 5,
+      "partner_ai": 5,
+      "surplus_ai": 0
+    },
+    "by_label": {
+      "ai": 5,
+      "human": 5
+    },
+    "by_generator": {
+      "gemini-3.1-flash-lite": 3,
+      "human": 5,
+      "openai/gpt-oss-120b": 2
+    }
+  },
+  "notes": [
+    "gemma-4-31b-it: train 26, val 3, test 3; fewer than 10 rows in val or test, so its per-generator numbers mean little"
+  ]
+}

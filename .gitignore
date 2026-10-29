@@ -17,3 +17,7 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Colab bundle (code + gitignored splits), made by src/make_colab_bundle.py
+colab_bundle.zip
+colab_bundle/
